@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Liquid Glass AI", page_icon="💧", layout="wide",
+st.set_page_config(page_title AIv2", page_icon="💧", layout="wide",
                    initial_sidebar_state="collapsed")
 
 st.markdown("""<style>
@@ -76,17 +76,18 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 .round-btn svg{width:22px;height:22px;fill:currentColor}
 .gear-shell{position:absolute;top:16px;left:16px;z-index:12}
 
-/* model picker (left of send) */
-.model-wrap{position:relative;z-index:6;flex:none;align-self:flex-end;margin-bottom:4px}
-.model-btn{display:flex;align-items:center;gap:6px;height:36px;max-width:170px;padding:0 12px 0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.2);background:rgba(245,249,255,.1);color:#fff;font-size:13px;cursor:pointer;transition:background .16s ease}
-.model-btn:hover{background:rgba(255,255,255,.16)}
-.model-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.model-btn svg{width:14px;height:14px;flex:none;fill:currentColor;opacity:.8}
-.model-menu{display:none;position:absolute;right:0;bottom:calc(100% + 12px);min-width:200px;padding:6px;border-radius:18px;border:1px solid var(--glass-border);background:rgba(14,20,30,.55);backdrop-filter:blur(26px) saturate(1.4);-webkit-backdrop-filter:blur(26px) saturate(1.4);box-shadow:0 18px 50px rgba(0,0,0,.35)}
-.model-menu.open{display:block}
-.model-item{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 12px;border:0;border-radius:12px;background:transparent;color:#fff;font-size:13.5px;text-align:left;cursor:pointer}
-.model-item:hover{background:rgba(255,255,255,.1)}
-.model-item.on::after{content:"✓";opacity:.9}
+/* Attachments */
+#attachments{position:relative;z-index:4;display:flex;flex-wrap:wrap;gap:7px;padding:0 8px 8px}
+#attachments:empty{display:none}
+.attachment-chip{display:flex;align-items:center;gap:8px;min-width:0;max-width:min(300px,100%);padding:6px 8px 6px 11px;border:1px solid rgba(255,255,255,.2);border-radius:999px;background:rgba(245,249,255,.12);color:rgba(255,255,255,.95);font-size:12px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.attachment-chip .file-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attachment-chip .file-kind{opacity:.67;white-space:nowrap}
+.attachment-chip button{display:grid;place-items:center;width:20px;height:20px;flex:none;border:0;border-radius:50%;background:rgba(255,255,255,.12);color:white;cursor:pointer;line-height:1}
+.attachment-chip button:hover{background:rgba(255,255,255,.24)}
+#fileInput{display:none}
+.add-shell{flex:0 0 44px}
+.add-shell .glass-lens{background:rgba(245,249,255,.10)}
+#addFiles{font-size:24px;font-weight:350}
 
 /* settings menu = liquidGL helper only */
 #panel{display:none;position:absolute;z-index:30;top:70px;left:16px;width:320px;max-width:calc(100% - 32px);max-height:calc(100% - 96px);overflow:auto;border-radius:22px;border:1px solid var(--glass-border);background:rgba(14,20,30,.5);backdrop-filter:blur(26px) saturate(1.4);-webkit-backdrop-filter:blur(26px) saturate(1.4);box-shadow:0 18px 50px rgba(0,0,0,.35);scrollbar-width:thin}
@@ -100,7 +101,7 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 #msgs{padding:70px 14px 18px;gap:12px}
 .message-shell{padding:11px 14px;max-width:100%}
 #composer{width:calc(100% - 20px);margin-bottom:max(12px,env(safe-area-inset-bottom));padding-left:15px;border-radius:23px}
-.model-btn{max-width:120px}
+.attachment-chip{max-width:calc(100vw - 60px)}
 #hello{inset:0 0 82px}
 #hello h1{font-size:clamp(32px,9vw,49px)}
 }
@@ -129,12 +130,14 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
     <div id="hello"><h1>What can I help with?</h1></div>
     <div id="composer">
       <div class="glass-lens" id="composerGlass" aria-hidden="true"></div>
+      <div id="attachments" aria-live="polite" aria-label="Attached files"></div>
       <div class="composer-inner">
-        <textarea id="ta" rows="1" placeholder="Ask anything" aria-label="Message" autocomplete="off" spellcheck="true"></textarea>
-        <div class="model-wrap" id="modelWrap">
-          <button class="model-btn" id="modelBtn" type="button" aria-haspopup="listbox" aria-expanded="false" title="Model"><span id="modelLabel"></span><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></button>
-          <div class="model-menu" id="modelMenu" role="listbox"></div>
+        <div class="round-shell add-shell">
+          <div class="glass-lens" id="addGlass" aria-hidden="true"></div>
+          <button class="round-btn" id="addFiles" type="button" aria-label="Add files" title="Add files">＋</button>
+          <input id="fileInput" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.json,.xml,.html,.css,.js,.ts,.py,.log,.yaml,.yml,.toml,.sql,.sh,.java,.c,.cpp,.h,.rs,.go,.rb,.php,.ini,.cfg,.env,.rst,.tex,.diff,.patch">
         </div>
+        <textarea id="ta" rows="1" placeholder="Ask anything" aria-label="Message" autocomplete="off" spellcheck="true"></textarea>
         <div class="round-shell">
           <div class="glass-lens" id="sendGlass" aria-hidden="true"></div>
           <button class="round-btn" id="send" type="button" aria-label="Send message" title="Send">↑</button>
@@ -155,7 +158,6 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 
   let A = {}, msgs = [], pending = null, booted = false, glassReady = false, counter = 0;
   const rows = [], all = [];
-  const S = { model: null };
 
   /* ---------- hide platform badge (best effort, same-origin frames only) ---------- */
   const BADGE = '[class*="viewerBadge"],[class*="profileContainer"],[class*="profilePreview"],a[href*="streamlit.io"]';
@@ -225,7 +227,7 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
       await Promise.all([load(BASE + 'liquidGL.js'), load(BASE + 'liquidGL-helper.js')]);
       if (typeof window.liquidGL !== 'function') throw new Error('liquidGL did not load');
       glassReady = true;
-      const first = ['#composerGlass', '#sendGlass', '#gearGlass'].map(s => installLens($(s))).filter(Boolean);
+      const first = ['#composerGlass', '#addGlass', '#sendGlass', '#gearGlass'].map(s => installLens($(s))).filter(Boolean);
       if (window.__liquidGLHelper__ && first.length) {
         window.__liquidGLHelper__(first, { ...glassOptions, target: '#composerGlass' });
         adoptGui();
@@ -284,38 +286,72 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
     if (changed) requestAnimationFrame(() => { msgsEl.scrollTop = msgsEl.scrollHeight; });
   }
 
-  /* ---------- model picker ---------- */
-  const menu = $('#modelMenu');
-  function renderModels() {
-    menu.innerHTML = '';
-    (A.models || []).forEach(m => {
-      const b = document.createElement('button');
-      b.type = 'button'; b.className = 'model-item' + (m.id === S.model ? ' on' : ''); b.setAttribute('role', 'option');
-      b.textContent = m.label;
-      b.addEventListener('click', () => { S.model = m.id; renderModels(); closeMenus(); });
-      menu.append(b);
-    });
-    const cur = (A.models || []).find(m => m.id === S.model);
-    $('#modelLabel').textContent = cur ? cur.label : '';
-  }
-  function closeMenus() { menu.classList.remove('open'); panel.classList.remove('open'); $('#modelBtn').setAttribute('aria-expanded', 'false'); }
-  $('#modelBtn').addEventListener('click', () => { const o = menu.classList.toggle('open'); panel.classList.remove('open'); $('#modelBtn').setAttribute('aria-expanded', o); });
-  $('#gear').addEventListener('click', () => { const o = panel.classList.toggle('open'); if (o) menu.classList.remove('open'); });
+  /* ---------- settings menu ---------- */
+  function closeMenus() { panel.classList.remove('open'); }
+  $('#gear').addEventListener('click', () => panel.classList.toggle('open'));
   document.addEventListener('click', e => {
-    if (!e.target.closest('#modelWrap')) menu.classList.remove('open');
     if (!panel.contains(e.target) && !e.target.closest('.gear-shell')) panel.classList.remove('open');
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenus(); });
+
+  /* ---------- file attachments ---------- */
+  const fileInput = $('#fileInput'), addFilesBtn = $('#addFiles'), attachmentsEl = $('#attachments');
+  const attached = [];
+  const TEXT_EXT = new Set(['txt','md','csv','json','xml','html','css','js','ts','py','log','yaml','yml','toml','sql','sh','java','c','cpp','h','rs','go','rb','php','ini','cfg','env','rst','tex','diff','patch']);
+  const IMAGE_TYPES = new Set(['image/png','image/jpeg','image/webp','image/gif']);
+  const MAX_FILES = 5, MAX_IMAGE_BYTES = 3 * 1024 * 1024, MAX_TEXT_BYTES = 150 * 1024, MAX_TOTAL_BYTES = 7 * 1024 * 1024, MAX_TEXT_CHARS = 100000;
+  const extOf = name => (name.split('.').pop() || '').toLowerCase();
+  function formatBytes(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n/1024).toFixed(0) + ' KB' : (n/1048576).toFixed(1) + ' MB'; }
+  function renderAttachments() {
+    attachmentsEl.replaceChildren();
+    attached.forEach((file, idx) => {
+      const chip = document.createElement('div'); chip.className = 'attachment-chip';
+      const name = document.createElement('span'); name.className = 'file-name'; name.textContent = file.name; name.title = file.name;
+      const kind = document.createElement('span'); kind.className = 'file-kind'; kind.textContent = file.kind === 'image' ? 'image' : 'file';
+      const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '×'; remove.setAttribute('aria-label', 'Remove ' + file.name); remove.title = 'Remove file';
+      remove.addEventListener('click', () => { attached.splice(idx, 1); renderAttachments(); });
+      chip.append(name, kind, remove); attachmentsEl.append(chip);
+    });
+  }
+  function readDataURL(file) { return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result || '').split(',').pop()); r.onerror = () => reject(new Error('Could not read ' + file.name)); r.readAsDataURL(file); }); }
+  addFilesBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const incoming = Array.from(fileInput.files || []); fileInput.value = '';
+    for (const file of incoming) {
+      if (attached.length >= MAX_FILES) { statusEl.textContent = 'You can attach up to ' + MAX_FILES + ' files per message.'; break; }
+      if (attached.some(f => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified)) continue;
+      const ext = extOf(file.name), isImage = IMAGE_TYPES.has(file.type), isText = TEXT_EXT.has(ext) || file.type.startsWith('text/') || file.type === 'application/json';
+      if (!isImage && !isText) { statusEl.textContent = 'Unsupported file type: ' + file.name + '. Choose an image or a text/code file.'; continue; }
+      if (isImage && file.size > MAX_IMAGE_BYTES) { statusEl.textContent = file.name + ' is too large. Images must be 3 MB or smaller.'; continue; }
+      if (isText && file.size > MAX_TEXT_BYTES) { statusEl.textContent = file.name + ' is too large. Text files must be 150 KB or smaller.'; continue; }
+      const currentBytes = attached.reduce((sum, f) => sum + f.size, 0);
+      if (currentBytes + file.size > MAX_TOTAL_BYTES) { statusEl.textContent = 'Attachments must total 7 MB or less.'; break; }
+      try {
+        if (isImage) {
+          attached.push({name:file.name,type:file.type,kind:'image',data:await readDataURL(file),size:file.size,lastModified:file.lastModified});
+        } else {
+          const data = await file.text();
+          if (data.length > MAX_TEXT_CHARS) { statusEl.textContent = file.name + ' contains too much text (100,000 characters maximum).'; continue; }
+          attached.push({name:file.name,type:file.type || 'text/plain',kind:'text',data,size:file.size,lastModified:file.lastModified});
+        }
+        renderAttachments();
+        statusEl.textContent = '';
+      } catch (err) { statusEl.textContent = err.message || 'Could not read that file.'; }
+    }
+  });
 
   /* ---------- send ---------- */
   const fitTextarea = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 180) + 'px'; };
   function send() {
     const text = ta.value.trim();
-    if (!text || pending) return;
+    if ((!text && !attached.length) || pending) return;
     const id = pending = crypto.randomUUID();
-    msgs = [...msgs, { role: 'user', content: text }];
+    const files = attached.map(({name,type,kind,data,size}) => ({name,type,kind,data,size}));
+    const visible = [text, ...files.map(f => '📎 ' + f.name)].filter(Boolean).join('\n\n');
+    msgs = [...msgs, { role: 'user', content: visible }];
+    attached.splice(0, attached.length); renderAttachments();
     ta.value = ''; fitTextarea(); sync();
-    post('setComponentValue', { value: { id, type: 'send', text, model: S.model }, dataType: 'json' });
+    post('setComponentValue', { value: { id, type: 'send', text, attachments: files }, dataType: 'json' });
     setTimeout(() => { if (pending === id) { pending = null; sync(); } }, 150000);
   }
   ta.addEventListener('input', fitTextarea);
@@ -330,7 +366,7 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
       msgs = A.messages || [];
       if (A.reply_to === pending) pending = null;
     }
-    if (!booted) { booted = true; S.model = A.default_model; renderModels(); initGlass(); }
+    if (!booted) { booted = true; initGlass(); }
     statusEl.textContent = A.has_key ? '' : 'Add your API key to Streamlit secrets.';
     sync();
   });
@@ -352,15 +388,10 @@ if _bg.exists():
 _ui = components.declare_component("liquid_glass_chat", path=str(_dir))
 
 PROVIDERS = {
-    "ollama": {"endpoint": "https://ollama.com", "model": "nemotron-3-nano:30b-cloud"},
+    "ollama": {"endpoint": "https://ollama.com", "model": "gemma4:31b-cloud"},
     "openai": {"endpoint": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
 }
-MODELS = [
-    {"label": "gemma4", "id": "gemma4:31b-cloud"},
-    {"label": "nemotron-3-nano", "id": "nemotron-3-nano:30b-cloud"},
-    {"label": "gpt-oss", "id": "gpt-oss:20b-cloud"},
-]
-DEFAULT_MODEL = "nemotron-3-nano:30b-cloud"
+DEFAULT_MODEL = "gemma4:31b-cloud"
 GEN = {"temperature": 0.7, "top_p": 1.0, "max_tokens": 2048}
 
 
@@ -376,7 +407,12 @@ def provider_name():
     return p if p in PROVIDERS else "ollama"
 
 
-def ask(model_id, history):
+def ask(history):
+    """Call the configured chat API using fixed Gemma 4 by default.
+
+    Text attachments are included in the user's prompt. Images are retained in
+    the history and sent using each provider's supported message format.
+    """
     name = provider_name()
     s, d = secret(name), PROVIDERS[name]
     endpoint = s.get("endpoint", d["endpoint"]).rstrip("/")
@@ -387,24 +423,43 @@ def ask(model_id, history):
     if not key:
         raise ValueError(f"Add api_key under [{name}] in Streamlit secrets.")
     system = secret("app").get("system", "You are a helpful assistant.")
-    msgs = ([{"role": "system", "content": system}] if system else []) + history
+    source_messages = ([{"role": "system", "content": system}] if system else []) + history
     headers = {"Authorization": f"Bearer {key}"}
 
     if name == "ollama":
-        model = model_id if model_id in {m["id"] for m in MODELS} else DEFAULT_MODEL
-        names = [model] + ([model[:-6]] if model.endswith("-cloud") else [])   # retry without "-cloud" on 404
+        model = DEFAULT_MODEL
+        names = [model] + ([model[:-6]] if model.endswith("-cloud") else [])
+        messages = []
+        for m in source_messages:
+            item = {"role": m["role"], "content": m.get("content", "")}
+            images = m.get("images") or []
+            if images:
+                item["images"] = [im["data"] for im in images]
+            messages.append(item)
     else:
         names = [s.get("model", d["model"])]
+        messages = []
+        for m in source_messages:
+            content = m.get("content", "")
+            images = m.get("images") or []
+            if images:
+                parts = [{"type": "text", "text": content}]
+                for im in images:
+                    parts.append({"type": "image_url", "image_url": {
+                        "url": f"data:{im['type']};base64,{im['data']}"
+                    }})
+                content = parts
+            messages.append({"role": m["role"], "content": content})
 
     for i, model in enumerate(names):
         if name == "ollama":
             url = f"{endpoint}/api/chat"
-            body = {"model": model, "messages": msgs, "stream": False,
+            body = {"model": model, "messages": messages, "stream": False,
                     "options": {"temperature": GEN["temperature"], "top_p": GEN["top_p"],
                                 "num_predict": GEN["max_tokens"]}}
         else:
             url = f"{endpoint}/chat/completions"
-            body = {"model": model, "messages": msgs, **GEN}
+            body = {"model": model, "messages": messages, **GEN}
         r = requests.post(url, headers=headers, json=body, timeout=120)
         if r.status_code == 404 and i < len(names) - 1:
             continue
@@ -424,21 +479,72 @@ if code and not st.session_state.get("ok"):
     st.stop()
 
 st.session_state.setdefault("msgs", [])
+st.session_state.setdefault("api_history", [])
 st.session_state.setdefault("seen", None)
 
 val = _ui(messages=st.session_state.msgs,
-          models=MODELS, default_model=DEFAULT_MODEL,
+          default_model=DEFAULT_MODEL,
           has_key=bool(secret(provider_name()).get("api_key")),
           reply_to=st.session_state.seen,
           key="ui", default=None)
 
 if val and val.get("id") != st.session_state.seen:
     st.session_state.seen = val["id"]
-    st.session_state.msgs.append({"role": "user", "content": str(val.get("text", ""))[:20000]})
-    history = [{"role": m["role"], "content": m["content"]}
-               for m in st.session_state.msgs if not m.get("error")]
+    user_text = str(val.get("text", ""))[:20000].strip()
+    raw_attachments = val.get("attachments", [])
+    if not isinstance(raw_attachments, list):
+        raw_attachments = []
+    raw_attachments = raw_attachments[:5]
+    api_content_parts = [user_text] if user_text else []
+    image_attachments = []
+    display_files = []
+    total_attachment_bytes = 0
+    allowed_images = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+    allowed_text_exts = {"txt", "md", "csv", "json", "xml", "html", "css", "js", "ts", "py", "log", "yaml", "yml", "toml", "sql", "sh", "java", "c", "cpp", "h", "rs", "go", "rb", "php", "ini", "cfg", "env", "rst", "tex", "diff", "patch"}
+    for item in raw_attachments:
+        if not isinstance(item, dict):
+            continue
+        file_name = str(item.get("name", "attachment"))[:200]
+        mime = str(item.get("type", "application/octet-stream"))[:100]
+        kind = item.get("kind")
+        data = item.get("data", "")
+        if not isinstance(data, str):
+            continue
+        if kind == "image" and mime in allowed_images:
+            # Base64 data is checked and size-limited before it reaches the API.
+            if len(data) > 4_300_000:
+                continue
+            try:
+                import base64
+                decoded = base64.b64decode(data, validate=True)
+            except Exception:
+                continue
+            total_attachment_bytes += len(decoded)
+            if total_attachment_bytes > 7 * 1024 * 1024:
+                continue
+            image_attachments.append({"name": file_name, "type": mime, "data": data})
+            display_files.append(file_name)
+        elif kind == "text":
+            ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+            if ext not in allowed_text_exts or len(data) > 100_000:
+                continue
+            total_attachment_bytes += len(data.encode("utf-8", errors="replace"))
+            if total_attachment_bytes > 7 * 1024 * 1024:
+                continue
+            api_content_parts.append(f"\n\n[Attached file: {file_name}]\n```\n{data}\n```")
+            display_files.append(file_name)
+    api_content = "".join(api_content_parts).strip()
+    if not api_content:
+        api_content = "Please analyze the attached file(s)." if image_attachments else "Please review the attached file(s)."
+    display_content = "\n\n".join(([user_text] if user_text else []) + ["📎 " + n for n in display_files])
+    if not display_content:
+        display_content = user_text or "Please review the attached file(s)."
+    st.session_state.msgs.append({"role": "user", "content": display_content})
+    st.session_state.api_history.append({"role": "user", "content": api_content, "images": image_attachments})
     try:
-        out = {"role": "assistant", "content": ask(val.get("model"), history)}
+        answer = ask(st.session_state.api_history)
+        out = {"role": "assistant", "content": answer}
+        st.session_state.api_history.append({"role": "assistant", "content": answer})
     except Exception as e:
         out = {"role": "assistant", "content": f"⚠️ {e}", "error": True}
     st.session_state.msgs.append(out)
