@@ -30,7 +30,7 @@ UI_HTML = r'''<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Liquid Glass AI</title>
 <style>
-:root{color-scheme:dark;--text:#f7f9fc;--muted:rgba(247,249,252,.67);--glass-border:rgba(255,255,255,.28);--glass-fill:rgba(231,241,255,.065)}
+:root{color-scheme:dark;--text:#f7f9fc;--muted:rgba(247,249,252,.67);--glass-border:rgba(255,255,255,.30);--glass-fill:rgba(231,241,255,.085)}
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#10151d;color:var(--text);font:500 15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 button,textarea,input,select{font:inherit;color:inherit}
@@ -48,7 +48,7 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 .message-shell{position:relative;width:fit-content;max-width:min(820px,100%);min-width:0;padding:12px 17px;border-radius:22px;overflow:visible;overflow-wrap:anywhere}
 .message-row.user .message-shell{border-radius:22px 22px 7px 22px}
 .message-row.assistant .message-shell{border-radius:22px 22px 22px 7px}
-.glass-lens{position:absolute;inset:0;z-index:2;border:1px solid var(--glass-border);border-radius:inherit;background:var(--glass-fill);backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);pointer-events:none}
+.glass-lens{position:absolute;inset:0;z-index:2;border:1px solid var(--glass-border);border-radius:inherit;background:var(--glass-fill);backdrop-filter:blur(22px) saturate(1.32);-webkit-backdrop-filter:blur(22px) saturate(1.32);pointer-events:none}
 .message-content{position:relative;z-index:4;min-width:0;overflow-wrap:anywhere;color:rgba(255,255,255,.96);text-shadow:0 1px 9px rgba(0,0,0,.18)}
 .message-content pre{max-width:100%;overflow:auto;margin:10px 0 3px;padding:12px 14px;border-radius:13px;background:rgba(4,9,15,.48);border:1px solid rgba(255,255,255,.11);white-space:pre;overflow-wrap:normal;text-shadow:none}
 .message-content code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
@@ -165,15 +165,21 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
       if (!d.getElementById('lg-hide')) { const s = d.createElement('style'); s.id = 'lg-hide'; s.textContent = BADGE + '{display:none!important}'; d.head.appendChild(s); }
     } catch (e) {} });
   }
-  hideBadge(); setInterval(hideBadge, 2000);
+  // One pass is enough; repeatedly scanning nested frames wastes work.
+  hideBadge();
 
   /* ---------- liquid glass ---------- */
   const glassOptions = {
-    snapshot: '#scene', engine: navigator.gpu ? 'webgpu' : 'auto', resolution: 3.0, zIndex: 2, content: false,
-    refraction: 0.025, bevelDepth: 0.09, bevelWidth: 0.19, frost: 10, aberration: 0.012, magnify: 1,
-    shadow: true, specular: true, tint: 'rgba(218,233,255,0.035)', reveal: 'none'
+    snapshot: '#scene',
+    // Force liquidGL's WebGPU backend where supported; do not choose WebGL.
+    engine: 'webgpu', resolution: 2.5, zIndex: 2, content: false,
+    refraction: 0.016, bevelDepth: 0.065, bevelWidth: 0.18,
+    frost: 1.5, aberration: 0.002, magnify: 1,
+    shadow: true, specular: true, tint: 'rgba(218,233,255,0.05)',
+    reveal: 'none', interaction: 'none', draggable: false, tilt: false
   };
-  const INHERIT = ['refraction','aberration','bevelDepth','bevelWidth','magnify','frost','specular','interaction','interactionStrength','interactionRadius','interactionViscosity','tiltFactor','tiltEase'];
+  // Only visible surface controls are inherited by new message lenses.
+  const INHERIT = ['refraction','aberration','bevelDepth','bevelWidth','magnify','frost','specular','shadow'];
 
   function installLens(el) {
     if (!glassReady || !el) return null;
@@ -195,12 +201,22 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
   }
   const load = (src) => new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); });
 
-  // move the helper's lil-gui into the gear menu
+  // Keep visual tuning in Settings, but remove Interaction/Initialisation folders.
+  function removeUnneededSettings(guiRoot) {
+    if (!guiRoot) return;
+    guiRoot.querySelectorAll('.lil-gui').forEach(folder => {
+      if (folder === guiRoot) return;
+      const title = folder.querySelector(':scope > .title');
+      const label = (title?.textContent || '').trim();
+      if (/^(interaction|initialisation|initialization)$/i.test(label)) folder.remove();
+    });
+  }
   function adoptGui(tries = 0) {
     const g = (window.__liquidGLHelperGUIs__ || [])[0];
     if (!g) { if (tries < 60) setTimeout(() => adoptGui(tries + 1), 100); return; }
     g.gui.open();
     panel.appendChild(g.gui.domElement);
+    removeUnneededSettings(g.gui.domElement);
   }
 
   async function initGlass() {
@@ -210,7 +226,10 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
       if (typeof window.liquidGL !== 'function') throw new Error('liquidGL did not load');
       glassReady = true;
       const first = ['#composerGlass', '#sendGlass', '#gearGlass'].map(s => installLens($(s))).filter(Boolean);
-      if (window.__liquidGLHelper__ && first.length) { window.__liquidGLHelper__(first, { ...glassOptions, target: '#composerGlass' }); adoptGui(); }
+      if (window.__liquidGLHelper__ && first.length) {
+        window.__liquidGLHelper__(first, { ...glassOptions, target: '#composerGlass' });
+        adoptGui();
+      }
       rows.forEach(r => { if (!r.lens) r.lens = installLens(r.lensEl); });
     } catch (e) { console.warn('liquidGL unavailable; CSS glass fallback', e); }
   }
@@ -262,7 +281,7 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
       if (rows[i].key !== key) { rows[i].key = key; paint(rows[i], m); changed = true; }
     });
     sendBtn.disabled = !!pending;
-    if (changed) requestAnimationFrame(() => { msgsEl.scrollTop = msgsEl.scrollHeight; window.dispatchEvent(new Event('resize')); });
+    if (changed) requestAnimationFrame(() => { msgsEl.scrollTop = msgsEl.scrollHeight; });
   }
 
   /* ---------- model picker ---------- */
