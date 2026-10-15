@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import shutil
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -49,8 +50,6 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 .message-row.assistant .message-shell{border-radius:22px 22px 22px 7px}
 .glass-lens{position:absolute;inset:0;z-index:2;border:1px solid var(--glass-border);border-radius:inherit;background:var(--glass-fill);backdrop-filter:blur(18px) saturate(1.25);-webkit-backdrop-filter:blur(18px) saturate(1.25);pointer-events:none}
 .message-content{position:relative;z-index:4;min-width:0;overflow-wrap:anywhere;color:rgba(255,255,255,.96);text-shadow:0 1px 9px rgba(0,0,0,.18)}
-.message-content p{margin:0 0 .7em}
-.message-content p:last-child{margin-bottom:0}
 .message-content pre{max-width:100%;overflow:auto;margin:10px 0 3px;padding:12px 14px;border-radius:13px;background:rgba(4,9,15,.48);border:1px solid rgba(255,255,255,.11);white-space:pre;overflow-wrap:normal;text-shadow:none}
 .message-content code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
 .message-content :not(pre)>code{background:rgba(7,13,21,.45);border:1px solid rgba(255,255,255,.12);padding:1px 5px;border-radius:6px}
@@ -76,23 +75,32 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 .round-btn:disabled{cursor:default;opacity:.68}
 .round-btn svg{width:22px;height:22px;fill:currentColor}
 .gear-shell{position:absolute;top:16px;left:16px;z-index:12}
-#panel{display:none;position:absolute;z-index:30;top:70px;left:16px;width:310px;max-width:calc(100% - 32px);max-height:calc(100% - 96px);overflow:auto;border-radius:22px;border:1px solid var(--glass-border);background:rgba(14,20,30,.5);backdrop-filter:blur(26px) saturate(1.4);-webkit-backdrop-filter:blur(26px) saturate(1.4);box-shadow:0 18px 50px rgba(0,0,0,.35);scrollbar-width:thin}
+
+/* model picker (left of send) */
+.model-wrap{position:relative;z-index:6;flex:none;align-self:flex-end;margin-bottom:4px}
+.model-btn{display:flex;align-items:center;gap:6px;height:36px;max-width:170px;padding:0 12px 0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.2);background:rgba(245,249,255,.1);color:#fff;font-size:13px;cursor:pointer;transition:background .16s ease}
+.model-btn:hover{background:rgba(255,255,255,.16)}
+.model-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.model-btn svg{width:14px;height:14px;flex:none;fill:currentColor;opacity:.8}
+.model-menu{display:none;position:absolute;right:0;bottom:calc(100% + 12px);min-width:200px;padding:6px;border-radius:18px;border:1px solid var(--glass-border);background:rgba(14,20,30,.55);backdrop-filter:blur(26px) saturate(1.4);-webkit-backdrop-filter:blur(26px) saturate(1.4);box-shadow:0 18px 50px rgba(0,0,0,.35)}
+.model-menu.open{display:block}
+.model-item{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 12px;border:0;border-radius:12px;background:transparent;color:#fff;font-size:13.5px;text-align:left;cursor:pointer}
+.model-item:hover{background:rgba(255,255,255,.1)}
+.model-item.on::after{content:"✓";opacity:.9}
+
+/* settings menu = liquidGL helper only */
+#panel{display:none;position:absolute;z-index:30;top:70px;left:16px;width:320px;max-width:calc(100% - 32px);max-height:calc(100% - 96px);overflow:auto;border-radius:22px;border:1px solid var(--glass-border);background:rgba(14,20,30,.5);backdrop-filter:blur(26px) saturate(1.4);-webkit-backdrop-filter:blur(26px) saturate(1.4);box-shadow:0 18px 50px rgba(0,0,0,.35);scrollbar-width:thin}
 #panel.open{display:block}
-#panel label{display:block;padding:10px 16px;border-top:1px solid rgba(255,255,255,.08);font-size:12px;color:var(--muted)}
-#panel label:first-child{border-top:0}
-#panel label b{float:right;font-weight:500;color:#fff}
-#panel input,#panel select,#panel textarea{display:block;width:100%;margin-top:6px;padding:8px 10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:10px;color:#fff;font-size:13px;outline:0}
-#panel select option{color:#111}
-#panel input[type=range]{padding:0;height:18px;accent-color:#cfe2ff}
-#panel textarea{resize:vertical;min-height:60px}
-#panel .hint{padding:10px 16px;border-top:1px solid rgba(255,255,255,.08);font-size:11px;color:var(--muted)}
+#panel .lil-gui.root.liquidgl-helper{position:static!important;width:100%!important;max-height:none!important;border:0!important;border-radius:0!important;box-shadow:none!important;backdrop-filter:none!important;background:transparent!important;z-index:auto!important;--background-color:transparent}
+#panel .lil-gui.root.liquidgl-helper>.title{display:none}
+
 #status{position:fixed;left:50%;bottom:5px;transform:translateX(-50%);width:max-content;max-width:calc(100% - 32px);font-size:12px;color:rgba(255,255,255,.9);text-align:center;text-shadow:0 1px 8px #000;pointer-events:none}
 #status:empty{display:none}
-@media(max-width:768px){.lil-gui{display:none!important}}
 @media(max-width:650px){
 #msgs{padding:70px 14px 18px;gap:12px}
 .message-shell{padding:11px 14px;max-width:100%}
 #composer{width:calc(100% - 20px);margin-bottom:max(12px,env(safe-area-inset-bottom));padding-left:15px;border-radius:23px}
+.model-btn{max-width:120px}
 #hello{inset:0 0 82px}
 #hello h1{font-size:clamp(32px,9vw,49px)}
 }
@@ -104,29 +112,17 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 <body>
 
 <div id="scene" aria-hidden="true">
-  <img id="bgimg" alt="">
+  <img id="bgimg" src="city.png" alt="">
   <div class="scene-shade"></div>
 </div>
 
 <div id="app">
   <div class="round-shell gear-shell">
     <div class="glass-lens" id="gearGlass" aria-hidden="true"></div>
-    <button class="round-btn" id="gear" type="button" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
+    <button class="round-btn" id="gear" type="button" aria-label="Glass settings" title="Glass settings"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
   </div>
 
-  <div id="panel">
-    <label>Provider<select data-k="provider" id="provider"><option value="ollama">Ollama Cloud</option><option value="openai">OpenAI-compatible</option></select></label>
-    <label>Model<input data-k="model" id="model" autocomplete="off"></label>
-    <label>Temperature <b id="v_temperature"></b><input data-k="temperature" id="temperature" type="range" min="0" max="2" step="0.05"></label>
-    <label>Top-p <b id="v_top_p"></b><input data-k="top_p" id="top_p" type="range" min="0" max="1" step="0.05"></label>
-    <label>Max tokens<input data-k="max_tokens" id="max_tokens" type="number" min="1" max="32768" step="64"></label>
-    <label>System prompt<textarea data-k="system" id="system"></textarea></label>
-    <label>Background<select id="bgPreset"><option value="0">Aurora</option><option value="1">Sunset</option><option value="2">Ocean</option><option value="3">Mono</option></select></label>
-    <label>Upload image (stays in your browser)<input id="bgFile" type="file" accept="image/*"></label>
-    <label>Image URL (host must allow CORS)<input id="bgUrl" placeholder="https://…" autocomplete="off"></label>
-    <div class="hint" id="keyState"></div>
-    <div class="hint" id="gpu"></div>
-  </div>
+  <div id="panel"></div>
 
   <main>
     <div id="msgs" aria-live="polite" aria-label="Conversation"></div>
@@ -135,6 +131,10 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
       <div class="glass-lens" id="composerGlass" aria-hidden="true"></div>
       <div class="composer-inner">
         <textarea id="ta" rows="1" placeholder="Ask anything" aria-label="Message" autocomplete="off" spellcheck="true"></textarea>
+        <div class="model-wrap" id="modelWrap">
+          <button class="model-btn" id="modelBtn" type="button" aria-haspopup="listbox" aria-expanded="false" title="Model"><span id="modelLabel"></span><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></button>
+          <div class="model-menu" id="modelMenu" role="listbox"></div>
+        </div>
         <div class="round-shell">
           <div class="glass-lens" id="sendGlass" aria-hidden="true"></div>
           <button class="round-btn" id="send" type="button" aria-label="Send message" title="Send">↑</button>
@@ -153,9 +153,9 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
   const post = (type, d = {}) => parent.postMessage({ isStreamlitMessage: true, type: 'streamlit:' + type, ...d }, '*');
   const msgsEl = $('#msgs'), hello = $('#hello'), ta = $('#ta'), sendBtn = $('#send'), statusEl = $('#status'), panel = $('#panel');
 
-  let A = {}, P = {}, msgs = [], pending = null, booted = false, glassReady = false, counter = 0;
+  let A = {}, msgs = [], pending = null, booted = false, glassReady = false, counter = 0;
   const rows = [], all = [];
-  const S = { provider: 'ollama', temperature: 0.7, top_p: 1, max_tokens: 1024, system: 'You are a helpful assistant.', model: {} };
+  const S = { model: null };
 
   /* ---------- hide platform badge (best effort, same-origin frames only) ---------- */
   const BADGE = '[class*="viewerBadge"],[class*="profileContainer"],[class*="profilePreview"],a[href*="streamlit.io"]';
@@ -167,10 +167,10 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
   }
   hideBadge(); setInterval(hideBadge, 2000);
 
-  /* ---------- liquid glass (liquidGL lenses, helper GUI for tuning) ---------- */
+  /* ---------- liquid glass ---------- */
   const glassOptions = {
     snapshot: '#scene', engine: navigator.gpu ? 'webgpu' : 'auto', resolution: 3.0, zIndex: 2, content: false,
-    refraction: 0.025, bevelDepth: 0.09, bevelWidth: 0.19, frost: 0.18, aberration: 0.012, magnify: 1,
+    refraction: 0.025, bevelDepth: 0.09, bevelWidth: 0.19, frost: 10, aberration: 0.012, magnify: 1,
     shadow: true, specular: true, tint: 'rgba(218,233,255,0.035)', reveal: 'none'
   };
   const INHERIT = ['refraction','aberration','bevelDepth','bevelWidth','magnify','frost','specular','interaction','interactionStrength','interactionRadius','interactionViscosity','tiltFactor','tiltEase'];
@@ -181,60 +181,39 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
       const lens = [].concat(window.liquidGL({ ...glassOptions, target: '#' + el.id }))[0];
       if (!lens) return null;
       const base = all[0];
-      if (base && base.options) {            // new bubbles pick up the current helper-GUI values
+      if (base && base.options) {            // new bubbles pick up the current helper values
         INHERIT.forEach(k => { if (k in base.options) lens.options[k] = base.options[k]; });
         if (lens.setShadow && 'shadow' in base.options) lens.setShadow(base.options.shadow);
         const t = base.options.tint;
         if (Array.isArray(t) && lens.setTint) lens.setTint('rgba(' + Math.round(t[0]*255) + ',' + Math.round(t[1]*255) + ',' + Math.round(t[2]*255) + ',' + t[3] + ')');
       }
       all.push(lens);
-      const g = (window.__liquidGLHelperGUIs__ || [])[0];   // keep the helper GUI controlling every lens
+      const g = (window.__liquidGLHelperGUIs__ || [])[0];   // helper controls every lens
       if (g && !g.lenses.includes(lens)) g.lenses.push(lens);
       return lens;
     } catch (err) { console.warn('liquidGL lens failed; CSS glass fallback', err); return null; }
   }
   const load = (src) => new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); });
 
+  // move the helper's lil-gui into the gear menu
+  function adoptGui(tries = 0) {
+    const g = (window.__liquidGLHelperGUIs__ || [])[0];
+    if (!g) { if (tries < 60) setTimeout(() => adoptGui(tries + 1), 100); return; }
+    g.gui.open();
+    panel.appendChild(g.gui.domElement);
+  }
+
   async function initGlass() {
-    $('#gpu').textContent = navigator.gpu ? 'WebGPU is available — rendering client-side.' : 'WebGPU unavailable here — using WebGL fallback.';
-    await setBg(A.bg || presetURL(0), !!A.bg);
+    await $('#bgimg').decode().catch(() => {});
     try {
       await Promise.all([load(BASE + 'liquidGL.js'), load(BASE + 'liquidGL-helper.js')]);
       if (typeof window.liquidGL !== 'function') throw new Error('liquidGL did not load');
       glassReady = true;
       const first = ['#composerGlass', '#sendGlass', '#gearGlass'].map(s => installLens($(s))).filter(Boolean);
-      if (window.__liquidGLHelper__ && first.length) window.__liquidGLHelper__(first, { ...glassOptions, target: '#composerGlass' });
+      if (window.__liquidGLHelper__ && first.length) { window.__liquidGLHelper__(first, { ...glassOptions, target: '#composerGlass' }); adoptGui(); }
       rows.forEach(r => { if (!r.lens) r.lens = installLens(r.lensEl); });
     } catch (e) { console.warn('liquidGL unavailable; CSS glass fallback', e); }
   }
-
-  /* ---------- background ---------- */
-  const PAL = [
-    ['#1b0f2e','#3a1646','#0d2b3a','#ff7a3d','#6a5cff','#ff3d8b','#2ad4c0'],
-    ['#2b0f0f','#5a1f2a','#2a1646','#ffb02e','#ff5d5d','#ff3d8b','#8a5cff'],
-    ['#04121f','#0a2a4a','#062f3a','#1ec8ff','#2a6cff','#2ad4a0','#7a5cff'],
-    ['#0b0b0d','#1c1c20','#0f0f12','#d8d8e0','#8a8a96','#f0f0f5','#5a5a66']
-  ];
-  function presetURL(i) {
-    const c = PAL[i] || PAL[0];
-    const L = (n, f) => Array.from({ length: n }, (_, k) => f(k)).join('');
-    const grid = L(21, k => 'M' + (k*80) + ' 0V1000M0 ' + (k*50) + 'H1600');
-    const rings = L(8, k => '<circle cx="800" cy="500" r="' + (60 + k*70) + '"/>');
-    const s = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="' + c[0] + '"/><stop offset=".55" stop-color="' + c[1] + '"/><stop offset="1" stop-color="' + c[2] + '"/></linearGradient><filter id="b" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="70"/></filter></defs><rect width="1600" height="1000" fill="url(#g)"/><g filter="url(#b)"><circle cx="300" cy="260" r="260" fill="' + c[3] + '"/><circle cx="1250" cy="200" r="230" fill="' + c[4] + '"/><circle cx="880" cy="800" r="300" fill="' + c[5] + '"/><circle cx="1420" cy="780" r="190" fill="' + c[6] + '"/></g><g stroke="#fff" stroke-opacity=".3" stroke-width="2" fill="none"><path d="' + grid + '"/>' + rings + '</g></svg>';
-    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s);
-  }
-  async function setBg(src, cors) {
-    const img = $('#bgimg');
-    img.crossOrigin = cors ? 'anonymous' : null;
-    img.src = src;
-    try { await img.decode(); }
-    catch (e) { statusEl.textContent = 'Could not load that image (check URL / CORS).'; img.crossOrigin = null; img.src = presetURL(+$('#bgPreset').value); await img.decode().catch(() => {}); }
-    const r = window.__liquidGLRenderer__;     // same re-capture call the helper GUI uses
-    if (r && r.captureSnapshot) r.captureSnapshot();
-  }
-  $('#bgPreset').addEventListener('change', e => { $('#bgUrl').value = ''; $('#bgFile').value = ''; setBg(presetURL(+e.target.value)); });
-  $('#bgFile').addEventListener('change', e => { const f = e.target.files[0]; if (!f) return; const fr = new FileReader(); fr.onload = () => setBg(fr.result); fr.readAsDataURL(f); });
-  $('#bgUrl').addEventListener('change', e => { const u = e.target.value.trim(); if (u) setBg(u, true); });
 
   /* ---------- chat rendering (text is plain HTML over the lenses) ---------- */
   const escapeHTML = (s) => s.replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
@@ -283,31 +262,31 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
       if (rows[i].key !== key) { rows[i].key = key; paint(rows[i], m); changed = true; }
     });
     sendBtn.disabled = !!pending;
-    if (changed) { requestAnimationFrame(() => { msgsEl.scrollTop = msgsEl.scrollHeight; window.dispatchEvent(new Event('resize')); }); }
+    if (changed) requestAnimationFrame(() => { msgsEl.scrollTop = msgsEl.scrollHeight; window.dispatchEvent(new Event('resize')); });
   }
 
-  /* ---------- settings ---------- */
-  const NUM = ['temperature', 'top_p', 'max_tokens'];
-  function fillForm() {
-    const d = P[S.provider] || {};
-    $('#provider').value = S.provider;
-    $('#model').value = S.model[S.provider] ?? d.model ?? '';
-    NUM.concat('system').forEach(k => { $('#' + k).value = S[k]; const v = $('#v_' + k); if (v) v.textContent = S[k]; });
-    $('#keyState').textContent = d.has_key ? 'API key: loaded from Streamlit secrets.' : 'API key missing — add it to Streamlit secrets.';
-    statusEl.textContent = d.has_key ? '' : 'Add your API key to Streamlit secrets.';
+  /* ---------- model picker ---------- */
+  const menu = $('#modelMenu');
+  function renderModels() {
+    menu.innerHTML = '';
+    (A.models || []).forEach(m => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'model-item' + (m.id === S.model ? ' on' : ''); b.setAttribute('role', 'option');
+      b.textContent = m.label;
+      b.addEventListener('click', () => { S.model = m.id; renderModels(); closeMenus(); });
+      menu.append(b);
+    });
+    const cur = (A.models || []).find(m => m.id === S.model);
+    $('#modelLabel').textContent = cur ? cur.label : '';
   }
-  document.querySelectorAll('[data-k]').forEach(el => el.addEventListener('input', () => {
-    const k = el.dataset.k;
-    if (k === 'provider') { S.provider = el.value; fillForm(); return; }
-    if (k === 'model') S.model[S.provider] = el.value;
-    else S[k] = el.tagName === 'TEXTAREA' ? el.value : +el.value;
-    const v = $('#v_' + k); if (v) v.textContent = S[k];
-  }));
-  $('#gear').addEventListener('click', () => panel.classList.toggle('open'));
-  document.addEventListener('click', e => { if (!panel.contains(e.target) && !e.target.closest('.gear-shell')) panel.classList.remove('open'); });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') panel.classList.remove('open'); });
-  const settings = () => ({ provider: S.provider, model: S.model[S.provider] || (P[S.provider] || {}).model,
-    temperature: S.temperature, top_p: S.top_p, max_tokens: S.max_tokens, system: S.system });
+  function closeMenus() { menu.classList.remove('open'); panel.classList.remove('open'); $('#modelBtn').setAttribute('aria-expanded', 'false'); }
+  $('#modelBtn').addEventListener('click', () => { const o = menu.classList.toggle('open'); panel.classList.remove('open'); $('#modelBtn').setAttribute('aria-expanded', o); });
+  $('#gear').addEventListener('click', () => { const o = panel.classList.toggle('open'); if (o) menu.classList.remove('open'); });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#modelWrap')) menu.classList.remove('open');
+    if (!panel.contains(e.target) && !e.target.closest('.gear-shell')) panel.classList.remove('open');
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenus(); });
 
   /* ---------- send ---------- */
   const fitTextarea = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 180) + 'px'; };
@@ -317,7 +296,7 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
     const id = pending = crypto.randomUUID();
     msgs = [...msgs, { role: 'user', content: text }];
     ta.value = ''; fitTextarea(); sync();
-    post('setComponentValue', { value: { id, type: 'send', text, settings: settings() }, dataType: 'json' });
+    post('setComponentValue', { value: { id, type: 'send', text, model: S.model }, dataType: 'json' });
     setTimeout(() => { if (pending === id) { pending = null; sync(); } }, 150000);
   }
   ta.addEventListener('input', fitTextarea);
@@ -327,12 +306,13 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
   /* ---------- Streamlit component protocol ---------- */
   window.addEventListener('message', e => {
     if (!e.data || e.data.type !== 'streamlit:render') return;
-    A = e.data.args || {}; P = A.providers || {};
+    A = e.data.args || {};
     if (!pending || A.reply_to === pending) {
       msgs = A.messages || [];
       if (A.reply_to === pending) pending = null;
     }
-    if (!booted) { booted = true; fillForm(); initGlass(); }
+    if (!booted) { booted = true; S.model = A.default_model; renderModels(); initGlass(); }
+    statusEl.textContent = A.has_key ? '' : 'Add your API key to Streamlit secrets.';
     sync();
   });
   post('componentReady', { apiVersion: 1 });
@@ -347,12 +327,22 @@ main{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 _dir = Path(tempfile.gettempdir()) / ("lg_chat_" + hashlib.md5(UI_HTML.encode()).hexdigest()[:10])
 _dir.mkdir(parents=True, exist_ok=True)
 (_dir / "index.html").write_text(UI_HTML, encoding="utf-8")
+_bg = Path(__file__).parent / "city.png"          # keep city.png next to app.py
+if _bg.exists():
+    shutil.copyfile(_bg, _dir / "city.png")
 _ui = components.declare_component("liquid_glass_chat", path=str(_dir))
 
 PROVIDERS = {
-    "ollama": {"label": "Ollama Cloud", "endpoint": "https://ollama.com", "model": "gpt-oss:120b"},
-    "openai": {"label": "OpenAI-compatible", "endpoint": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
+    "ollama": {"endpoint": "https://ollama.com", "model": "nemotron-3-nano:30b-cloud"},
+    "openai": {"endpoint": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
 }
+MODELS = [
+    {"label": "gemma4", "id": "gemma4:31b-cloud"},
+    {"label": "nemotron-3-nano", "id": "nemotron-3-nano:30b-cloud"},
+    {"label": "gpt-oss", "id": "gpt-oss:20b-cloud"},
+]
+DEFAULT_MODEL = "nemotron-3-nano:30b-cloud"
+GEN = {"temperature": 0.7, "top_p": 1.0, "max_tokens": 2048}
 
 
 def secret(section):
@@ -362,43 +352,44 @@ def secret(section):
         return {}
 
 
-def prov(name):
-    d, s = dict(PROVIDERS[name]), secret(name)
-    d["endpoint"] = s.get("endpoint", d["endpoint"]).rstrip("/")
-    d["model"] = s.get("model", d["model"])
-    d["has_key"] = bool(s.get("api_key"))
-    return d
+def provider_name():
+    p = secret("app").get("provider", "ollama")      # optional: set [app] provider = "openai"
+    return p if p in PROVIDERS else "ollama"
 
 
-def ask(cfg, history):
-    name = cfg.get("provider")
-    if name not in PROVIDERS:
-        raise ValueError("Unknown provider")
-    d = prov(name)
-    endpoint = d["endpoint"]                      # endpoint + key come from secrets only
+def ask(model_id, history):
+    name = provider_name()
+    s, d = secret(name), PROVIDERS[name]
+    endpoint = s.get("endpoint", d["endpoint"]).rstrip("/")
     u = urlparse(endpoint)
     if not (u.scheme == "https" or (u.scheme == "http" and u.hostname in ("localhost", "127.0.0.1"))):
         raise ValueError("Endpoint must use https://")
-    key = secret(name).get("api_key", "")
+    key = s.get("api_key", "")
     if not key:
         raise ValueError(f"Add api_key under [{name}] in Streamlit secrets.")
-    model = str(cfg.get("model") or d["model"])[:200]
-    temp = min(max(float(cfg.get("temperature", 0.7)), 0.0), 2.0)
-    top_p = min(max(float(cfg.get("top_p", 1.0)), 0.0), 1.0)
-    max_tokens = min(max(int(cfg.get("max_tokens", 1024)), 1), 32768)
-    system = str(cfg.get("system") or "").strip()
+    system = secret("app").get("system", "You are a helpful assistant.")
     msgs = ([{"role": "system", "content": system}] if system else []) + history
     headers = {"Authorization": f"Bearer {key}"}
 
     if name == "ollama":
-        url = f"{endpoint}/api/chat"
-        body = {"model": model, "messages": msgs, "stream": False,
-                "options": {"temperature": temp, "top_p": top_p, "num_predict": max_tokens}}
+        model = model_id if model_id in {m["id"] for m in MODELS} else DEFAULT_MODEL
+        names = [model] + ([model[:-6]] if model.endswith("-cloud") else [])   # retry without "-cloud" on 404
     else:
-        url = f"{endpoint}/chat/completions"
-        body = {"model": model, "messages": msgs, "temperature": temp,
-                "top_p": top_p, "max_tokens": max_tokens}
-    r = requests.post(url, headers=headers, json=body, timeout=120)
+        names = [s.get("model", d["model"])]
+
+    for i, model in enumerate(names):
+        if name == "ollama":
+            url = f"{endpoint}/api/chat"
+            body = {"model": model, "messages": msgs, "stream": False,
+                    "options": {"temperature": GEN["temperature"], "top_p": GEN["top_p"],
+                                "num_predict": GEN["max_tokens"]}}
+        else:
+            url = f"{endpoint}/chat/completions"
+            body = {"model": model, "messages": msgs, **GEN}
+        r = requests.post(url, headers=headers, json=body, timeout=120)
+        if r.status_code == 404 and i < len(names) - 1:
+            continue
+        break
     if not r.ok:
         raise RuntimeError(f"{r.status_code}: {r.text[:300]}")
     j = r.json()
@@ -417,9 +408,9 @@ st.session_state.setdefault("msgs", [])
 st.session_state.setdefault("seen", None)
 
 val = _ui(messages=st.session_state.msgs,
-          providers={k: prov(k) for k in PROVIDERS},
+          models=MODELS, default_model=DEFAULT_MODEL,
+          has_key=bool(secret(provider_name()).get("api_key")),
           reply_to=st.session_state.seen,
-          bg=secret("ui").get("background_url"),
           key="ui", default=None)
 
 if val and val.get("id") != st.session_state.seen:
@@ -428,7 +419,7 @@ if val and val.get("id") != st.session_state.seen:
     history = [{"role": m["role"], "content": m["content"]}
                for m in st.session_state.msgs if not m.get("error")]
     try:
-        out = {"role": "assistant", "content": ask(val.get("settings", {}), history)}
+        out = {"role": "assistant", "content": ask(val.get("model"), history)}
     except Exception as e:
         out = {"role": "assistant", "content": f"⚠️ {e}", "error": True}
     st.session_state.msgs.append(out)
