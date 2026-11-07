@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>AnswerBot</title>
+<title>Ascent</title>
 <script>
   /* Chromium-only: navigator.userAgentData exists in Chromium browsers only (same test Nordify uses). */
   if (!("userAgentData" in navigator)) document.documentElement.classList.add("unsupported");
@@ -12,7 +12,7 @@
 <style>
   :root { --text: #f4f7ff; --muted: rgba(244,247,255,.68); }
   * { box-sizing: border-box; }
-  html, body { margin: 0; min-height: 100%; scrollbar-width: none; -ms-overflow-style: none; }
+  html, body { margin: 0; height: 100%; overflow: hidden; scrollbar-width: none; -ms-overflow-style: none; }
   html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
@@ -29,6 +29,10 @@
     padding: 24px; text-align: center; background: #fff; color: #111;
     font-size: clamp(22px, 4vw, 34px); font-weight: 650;
   }
+
+  /* Inside Streamlit the page itself cannot scroll, so a full-screen scroller does it (same look) */
+  #scroller { position: fixed; inset: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; -ms-overflow-style: none; }
+  #scroller::-webkit-scrollbar { display: none; }
 
   /* The PAGE scrolls (like Nordify's demo), so messages slide under the fixed prompt box and get refracted.
      Nordify rule: no filter / opacity / mask / overflow:hidden / isolation on glass elements or their ancestors. */
@@ -118,8 +122,10 @@
 
 <div id="unsupported">Switch to a Chromium based browser!</div>
 
+<div id="scroller">
 <div id="log">
-  <div class="empty"><b>AnswerBot</b>Ask anything. Attach an image or tap the mic.</div>
+  <div class="empty"><b>Ascent</b>Ask anything. Attach an image or tap the mic.</div>
+</div>
 </div>
 
 <button class="icon" id="gear" title="Settings" aria-label="Settings">
@@ -138,7 +144,7 @@
     <button class="icon" id="attach" title="Attach image" aria-label="Attach image">
       <svg viewBox="0 0 24 24"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.4-8.4"/></svg>
     </button>
-    <textarea id="input" rows="1" placeholder="Type Something"></textarea>
+    <textarea id="input" rows="1" placeholder="Message Ascent"></textarea>
     <button class="icon" id="mic" title="Dictate" aria-label="Dictate">
       <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
     </button>
@@ -153,17 +159,39 @@
 <script type="module">
 import { createLiquidGlass } from "./glass/liquid-glass.js";
 
-if (document.documentElement.classList.contains("unsupported")) throw new Error("AnswerBot needs a Chromium based browser.");
+if (document.documentElement.classList.contains("unsupported")) throw new Error("Ascent needs a Chromium based browser.");
 
 const $ = (id) => document.getElementById(id);
-const log = $("log"), input = $("input"), composer = $("composer"), panel = $("panel");
+const log = $("log"), scroller = $("scroller"), input = $("input"), composer = $("composer"), panel = $("panel");
+
+/* =====================================================================
+   Streamlit bridge (component protocol, no build step needed)
+   ===================================================================== */
+let pending = null;
+const stSend = (type, data = {}) => parent.postMessage({ isStreamlitMessage: true, type: "streamlit:" + type, ...data }, "*");
+addEventListener("message", (e) => {
+  if (e.source !== parent || !e.data || e.data.type !== "streamlit:render") return;
+  const r = e.data.args && e.data.args.reply;
+  if (r && pending && r.id === pending.id) { const p = pending; pending = null; p.done(r); }
+});
+stSend("componentReady", { apiVersion: 1 });
+stSend("setFrameHeight", { height: 600 });
+
+function askPython(messages) {
+  return new Promise((resolve, reject) => {
+    const id = Date.now() + "-" + Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => { pending = null; reject(new Error("Timed out waiting for the server.")); }, 330000);
+    pending = { id, done: (r) => { clearTimeout(timer); resolve(r); } };
+    stSend("setComponentValue", { value: { id, messages }, dataType: "json" });
+  });
+}
 
 /* =====================================================================
    Settings state
    Options go to createLiquidGlass(); vars are Nordify's --lg-* CSS custom
    properties. A var only overrides Nordify's own value once you move its slider.
    ===================================================================== */
-const AnswerBot_DEFAULTS = {
+const ASCENT_DEFAULTS = {
   radius: 23, rim: 3, blur: 2, saturate: 1, reflect: true, reflectStrength: 2.5, dark: true,
   vars: {
     "--lg-glint-exp": 0.6, "--lg-glint-sat": 0.5,
@@ -174,8 +202,8 @@ const AnswerBot_DEFAULTS = {
     "--lg-shadow-o": 0, "--lg-caustic-o": 0,
   },
 };
-const KEY = "AnswerBot.settings.v1";
-let S = { ...structuredClone(AnswerBot_DEFAULTS), bg: { id: "city" } };
+const KEY = "ascent.settings.v1";
+let S = { ...structuredClone(ASCENT_DEFAULTS), bg: { id: "city" } };
 let uploadData = null;
 try {
   const raw = localStorage.getItem(KEY);
@@ -232,7 +260,7 @@ const io = new IntersectionObserver((entries) => {
     if (en.isIntersecting) { if (!el._g) makeGlass(el); }
     else if (el._g) { el._g.destroy(); el._g = null; }
   }
-}, { rootMargin: "700px 0px" });
+}, { root: scroller, rootMargin: "700px 0px" });
 
 /* Option changes need the glass rebuilt (they are constructor options) */
 let rebuildTimer;
@@ -368,8 +396,8 @@ syncAll(); applyVars(); applyBg();
 /* =====================================================================
    Chat
    ===================================================================== */
-const toBottom = () => scrollTo(0, document.documentElement.scrollHeight);
-const nearBottom = () => innerHeight + scrollY >= document.documentElement.scrollHeight - 160;
+const toBottom = () => scroller.scrollTo(0, scroller.scrollHeight);
+const nearBottom = () => scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 160;
 
 let history = [];
 let pendingImage = null;
@@ -422,9 +450,9 @@ $("send").onclick = send;
 $("clear").onclick = () => {
   if (busy) return;
   log.querySelectorAll(".msg").forEach((m) => { io.unobserve(m); m._g?.destroy(); });
-  log.innerHTML = '<div class="empty"><b>AnswerBot</b>Ask anything. Attach an image or tap the mic.</div>';
+  log.innerHTML = '<div class="empty"><b>Ascent</b>Ask anything. Attach an image or tap the mic.</div>';
   history = [];
-  scrollTo(0, 0);
+  scroller.scrollTo(0, 0);
 };
 
 function addMsg(role, text, img) {
@@ -436,6 +464,20 @@ function addMsg(role, text, img) {
   log.appendChild(d);
   io.observe(d);
   return s;
+}
+
+/* The reply arrives whole from Python; reveal it quickly so it still feels like streaming */
+function reveal(el, text) {
+  return new Promise((done) => {
+    if (!text) { el.textContent = "(empty reply)"; return done(); }
+    let i = 0; const step = Math.max(3, Math.ceil(text.length / 80));
+    const t = setInterval(() => {
+      const stick = nearBottom();
+      i = Math.min(text.length, i + step); el.textContent = text.slice(0, i);
+      if (stick) toBottom();
+      if (i >= text.length) { clearInterval(t); done(); }
+    }, 20);
+  });
 }
 
 async function send() {
@@ -454,40 +496,11 @@ async function send() {
 
   const out = addMsg("bot", "…");
   toBottom();
-  let reply = "";
-
   try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: history }),
-    });
-    if (!res.ok) {
-      let m = res.statusText;
-      try { m = (await res.json()).error || m; } catch {}
-      throw new Error(m);
-    }
-    const reader = res.body.getReader(), dec = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split("\n"); buf = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const j = JSON.parse(line);
-          if (j.error) throw new Error(j.error);
-          if (j.message?.content) {
-            const stick = nearBottom();
-            reply += j.message.content;
-            out.textContent = reply;
-            if (stick) toBottom();
-          }
-        } catch (e) { if (e.message && !(e instanceof SyntaxError)) throw e; }
-      }
-    }
+    const r = await askPython(history);
+    if (r.error) throw new Error(r.error);
+    const reply = r.text || "";
+    await reveal(out, reply);
     history.push({ role: "assistant", content: reply });
   } catch (e) {
     out.parentElement.classList.add("err");
