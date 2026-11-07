@@ -1,3 +1,4 @@
+import hashlib
 import os
 from pathlib import Path
 
@@ -53,54 +54,43 @@ if not (FRONTEND / "index.html").is_file():
 ascent_ui = components.declare_component("ascent_ui", path=str(FRONTEND))
 
 
-# ---------------------------------------------------------------- Ollama
+# ---------------------------------------------------------------- Cloudflare credentials and API helpers
 def secret(name: str, default: str = "") -> str:
+    """Read a value from Streamlit Secrets first, then environment variables."""
     try:
         value = st.secrets[name]
     except Exception:
         value = None
-    return str(value or os.environ.get(name, default))
+    return str(value or os.environ.get(name, default)).strip()
 
 
-def ollama_chat(messages: list) -> str:
-    key = secret("OLLAMA_API_KEY")
-    if not key:
-        raise RuntimeError("OLLAMA_API_KEY is not set in Streamlit secrets.")
-    host = secret("OLLAMA_HOST", "https://ollama.com").rstrip("/")
-    model = secret("OLLAMA_MODEL", "gemma4")
+def cloudflare_credentials() -> tuple[str, str]:
+    account_id = secret("CLOUDFLARE_ACCOUNT_ID")
+    # Support both names used in Cloudflare examples and older deployments.
+    api_token = secret("CLOUDFLARE_API_TOKEN") or secret("CLOUDFLARE_AUTH_TOKEN")
+    if not account_id or not api_token:
+        raise RuntimeError(
+            "Cloudflare is not configured. Add CLOUDFLARE_ACCOUNT_ID and "
+            "CLOUDFLARE_API_TOKEN to Streamlit Secrets."
+        )
+    return account_id, api_token
 
-    clean = []
-    for m in messages:
-        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant", "system"):
-            continue
-        item = {"role": m["role"], "content": str(m.get("content", ""))}
-        if m.get("images"):
-            item["images"] = [str(i) for i in m["images"]]
-        clean.append(item)
-    if not clean:
-        raise RuntimeError("Empty conversation.")
 
-    r = requests.post(
-        f"{host}/api/chat",
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={"model": model, "messages": clean, "stream": False},
-        timeout=300,
+def cloudflare_run(model: str, inputs: dict, timeout: int = 300) -> dict:
+    """Call one Cloudflare Workers AI model through its account REST endpoint."""
+    account_id, api_token = cloudflare_credentials()
+    url = (
+        "https://api.cloudflare.com/client/v4/accounts/"
+        f"{account_id}/ai/run/{model}"
     )
-    if not r.ok:
-        raise RuntimeError(r.text[:400] or f"Ollama returned HTTP {r.status_code}")
-    return (r.json().get("message") or {}).get("content", "")
-
-
-# ---------------------------------------------------------------- glue
-st.session_state.setdefault("reply", None)
-st.session_state.setdefault("handled", None)
-
-value = ascent_ui(reply=st.session_state.reply, key="ascent", default=None)
-
-if isinstance(value, dict) and value.get("id") and value["id"] != st.session_state.handled:
-    st.session_state.handled = value["id"]
     try:
-        st.session_state.reply = {"id": value["id"], "text": ollama_chat(value.get("messages") or [])}
-    except Exception as e:  # shown inside the Ascent interface as an error bubble
-        st.session_state.reply = {"id": value["id"], "error": str(e)}
-    st.rerun()
+        response = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_token}",
+                "Content-Type": "application/json",
+            },
+            json=inputs,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
