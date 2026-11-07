@@ -174,65 +174,122 @@ def describe_image(image_b64: str, question: str) -> str:
 
 
 def granite_chat(messages: list) -> dict:
-    """Run chat through IBM Granite, using Moondream only for attached images."""
+    """Chat using IBM Granite through Cloudflare's Chat Completions API."""
+
+    account_id, api_token = cloudflare_credentials()
+
     clean = []
+
     for message in messages:
         if not isinstance(message, dict):
             continue
+
         role = message.get("role")
         if role not in ("system", "user", "assistant"):
             continue
 
         content = str(message.get("content", "") or "")
-        image_descriptions = []
+        descriptions = []
+
         for index, image_b64 in enumerate(message.get("images") or [], start=1):
             if not isinstance(image_b64, str) or not image_b64:
                 continue
+
             description = describe_image(
                 image_b64,
-                content.strip() or "Describe this image in useful detail.",
+                content.strip() or "Describe this image."
             )
-            image_descriptions.append(f"Image {index} analysis: {description}")
+            descriptions.append(
+                f"Image {index} analysis: {description}"
+            )
 
-        if image_descriptions:
-            content = (content + "\n\n" if content else "") + "\n".join(image_descriptions)
-        clean.append({"role": role, "content": content})
+        if descriptions:
+            content += "\n\n" + "\n".join(descriptions)
+
+        clean.append({
+            "role": role,
+            "content": content
+        })
 
     if not clean:
         raise RuntimeError("The conversation is empty.")
 
-    if not any(message["role"] == "system" for message in clean):
-        clean.insert(
-            0,
-            {
-                "role": "system",
-                "content": (
-                    "You are a helpful, clear, and accurate assistant. "
-                    "Use the supplied image descriptions when the user has attached images. "
-                    "Do not claim to see image pixels directly; image descriptions are provided "
-                    "by a separate vision model."
-                ),
+    if not any(m["role"] == "system" for m in clean):
+        clean.insert(0, {
+            "role": "system",
+            "content": "You are a helpful and accurate AI assistant."
+        })
+
+    url = (
+        "https://api.cloudflare.com/client/v4/accounts/"
+        f"{account_id}/ai/v1/chat/completions"
+    )
+
+    try:
+        response = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_token}",
+                "Content-Type": "application/json"
             },
+            json={
+                "model": "@cf/ibm-granite/granite-4.0-h-micro",
+                "messages": clean,
+                "max_tokens": 2048,
+                "temperature": 0.6,
+                "stream": False
+            },
+            timeout=300
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Cloudflare connection failed: {exc}"
+        ) from exc
+
+    try:
+        data = response.json()
+    except ValueError:
+        raise RuntimeError(
+            f"Invalid Cloudflare response: {response.text[:500]}"
         )
 
-    result = cloudflare_run(
-        CHAT_MODEL,
-        {
-            "messages": clean,
-            "max_tokens": 2048,
-            "temperature": 0.6,
-        },
-    )
-    text = str(result.get("response") or result.get("text") or "").strip()
-    if not text:
-        raise RuntimeError("IBM Granite returned an empty response.")
+    if not response.ok:
+        error = data.get("error", data.get("errors", data))
+        raise RuntimeError(
+            f"Cloudflare HTTP {response.status_code}: {error}"
+        )
 
-    # Granite 4.0 H Micro returns a normal text response, not a separate
-    # user-visible reasoning transcript. Keep the UI's Thinking status, but
-    # do not fabricate a thinking field.
-    return {"text": text, "thinking": "", "images": []}
+    choices = data.get("choices", [])
 
+    if not choices:
+        raise RuntimeError(
+            f"Granite returned no choices. Response keys: "
+            f"{list(data.keys())}"
+        )
 
+    message = choices[0].get("message", {})
+    answer = message.get("content", "")
+
+    if isinstance(answer, list):
+        answer = "\n".join(
+            part.get("text", "")
+            for part in answer
+            if isinstance(part, dict)
+        )
+
+    answer = str(answer or "").strip()
+
+    if not answer:
+        raise RuntimeError(
+            f"Granite returned an empty message. "
+            f"Finish reason: {choices[0].get('finish_reason')}"
+        )
+
+    return {
+        "text": answer,
+        "thinking": "",
+        "images": []
+    }
 def generate_image(prompt: str) -> dict:
     """Generate an image through Cloudflare Workers AI FLUX.1 Schnell."""
     prompt = str(prompt or "").strip()
