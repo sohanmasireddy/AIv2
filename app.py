@@ -131,19 +131,17 @@ def cloudflare_run(model: str, inputs: dict, timeout: int = 300) -> dict:
     return result
 
 
-# ---------------------------------------------------------------- IBM Granite chat
-CHAT_MODEL = "@cf/ibm-granite/granite-4.0-h-micro"
+# ---------------------------------------------------------------- Gemma 4 chat + image models
+CHAT_MODEL = "@cf/google/gemma-4-26b-a4b-it"
 VISION_MODEL = "@cf/moondream/moondream3.1-9B-A2B"
-IMAGE_MODEL = secret("CLOUDFLARE_IMAGE_MODEL", "@cf/black-forest-labs/flux-1-schnell")
+IMAGE_MODEL = "@cf/black-forest-labs/flux-2-klein-4b"
 
 
 def describe_image(image_b64: str, question: str) -> str:
-    """Use Cloudflare Moondream for image input; Granite itself is text-only."""
+    """Use Moondream for image uploads and pass its description to Gemma 4."""
     if not image_b64:
         return ""
 
-    # Cache per Streamlit session so earlier images in a continuing chat are not
-    # analyzed again on every subsequent message.
     cache = st.session_state.setdefault("vision_cache", {})
     cache_key = hashlib.sha256(
         (image_b64 + "\0" + question).encode("utf-8", errors="ignore")
@@ -164,154 +162,214 @@ def describe_image(image_b64: str, question: str) -> str:
     )
     answer = str(result.get("answer") or result.get("caption") or "").strip()
     if not answer:
-        raise RuntimeError("Cloudflare's image model did not return an image description.")
+        raise RuntimeError("Cloudflare's image-understanding model returned no description.")
 
-    # Keep this cache bounded for long-running Streamlit sessions.
     if len(cache) >= 32:
         cache.pop(next(iter(cache)))
     cache[cache_key] = answer
     return answer
 
 
-def granite_chat(messages: list) -> dict:
-    """Chat using IBM Granite through Cloudflare's Chat Completions API."""
+def _content_to_text(content) -> str:
+    """Normalize OpenAI-compatible message content into displayable text."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "\n".join(parts).strip()
+    return str(content or "").strip()
 
-    account_id, api_token = cloudflare_credentials()
 
+def gemma_chat(messages: list) -> dict:
+    """Run chat through Cloudflare's OpenAI-compatible Gemma 4 endpoint."""
     clean = []
-
     for message in messages:
         if not isinstance(message, dict):
             continue
-
         role = message.get("role")
         if role not in ("system", "user", "assistant"):
             continue
 
         content = str(message.get("content", "") or "")
-        descriptions = []
-
+        image_descriptions = []
         for index, image_b64 in enumerate(message.get("images") or [], start=1):
             if not isinstance(image_b64, str) or not image_b64:
                 continue
-
             description = describe_image(
                 image_b64,
-                content.strip() or "Describe this image."
+                content.strip() or "Describe this image in useful detail.",
             )
-            descriptions.append(
-                f"Image {index} analysis: {description}"
-            )
+            image_descriptions.append(f"Image {index} analysis: {description}")
 
-        if descriptions:
-            content += "\n\n" + "\n".join(descriptions)
-
-        clean.append({
-            "role": role,
-            "content": content
-        })
+        if image_descriptions:
+            content = (content + "\n\n" if content else "") + "\n".join(image_descriptions)
+        clean.append({"role": role, "content": content})
 
     if not clean:
         raise RuntimeError("The conversation is empty.")
 
-    if not any(m["role"] == "system" for m in clean):
-        clean.insert(0, {
-            "role": "system",
-            "content": "You are a helpful and accurate AI assistant."
-        })
+    if not any(message["role"] == "system" for message in clean):
+        clean.insert(
+            0,
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful, clear, and accurate assistant. "
+                    "Use the supplied image descriptions when the user attaches images. "
+                    "Do not claim to see image pixels directly; image descriptions are "
+                    "provided by a separate vision model."
+                ),
+            },
+        )
 
+    account_id, api_token = cloudflare_credentials()
     url = (
         "https://api.cloudflare.com/client/v4/accounts/"
         f"{account_id}/ai/v1/chat/completions"
     )
-
     try:
         response = requests.post(
             url,
             headers={
                 "Authorization": f"Bearer {api_token}",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             },
             json={
-                "model": "@cf/ibm-granite/granite-4.0-h-micro",
+                "model": CHAT_MODEL,
                 "messages": clean,
-                "max_tokens": 2048,
+                "max_completion_tokens": 2048,
                 "temperature": 0.6,
-                "stream": False
+                "stream": False,
             },
-            timeout=300
+            timeout=300,
         )
     except requests.RequestException as exc:
-        raise RuntimeError(
-            f"Cloudflare connection failed: {exc}"
-        ) from exc
+        raise RuntimeError(f"Could not reach Cloudflare Gemma 4: {exc}") from exc
 
     try:
-        data = response.json()
+        payload = response.json()
     except ValueError:
         raise RuntimeError(
-            f"Invalid Cloudflare response: {response.text[:500]}"
-        )
+            f"Cloudflare returned a non-JSON response (HTTP {response.status_code}): "
+            f"{response.text[:600]}"
+        ) from None
 
     if not response.ok:
-        error = data.get("error", data.get("errors", data))
-        raise RuntimeError(
-            f"Cloudflare HTTP {response.status_code}: {error}"
-        )
+        detail = payload.get("error", payload.get("errors", payload))
+        raise RuntimeError(f"Cloudflare Gemma 4 returned HTTP {response.status_code}: {detail}")
 
-    choices = data.get("choices", [])
-
+    choices = payload.get("choices") or []
     if not choices:
         raise RuntimeError(
-            f"Granite returned no choices. Response keys: "
-            f"{list(data.keys())}"
+            "Gemma 4 returned no choices. Cloudflare response keys: "
+            + ", ".join(str(key) for key in payload.keys())
         )
 
-    message = choices[0].get("message", {})
-    answer = message.get("content", "")
-
-    if isinstance(answer, list):
-        answer = "\n".join(
-            part.get("text", "")
-            for part in answer
-            if isinstance(part, dict)
-        )
-
-    answer = str(answer or "").strip()
-
+    choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = choice.get("message") or {}
+    answer = _content_to_text(message.get("content"))
     if not answer:
-        raise RuntimeError(
-            f"Granite returned an empty message. "
-            f"Finish reason: {choices[0].get('finish_reason')}"
-        )
+        reason = choice.get("finish_reason") or "not provided"
+        raise RuntimeError(f"Gemma 4 returned an empty message (finish reason: {reason}).")
 
-    return {
-        "text": answer,
-        "thinking": "",
-        "images": []
-    }
+    thinking = _content_to_text(
+        message.get("reasoning") or message.get("reasoning_content") or ""
+    )
+    return {"text": answer, "thinking": thinking, "images": []}
+
+
 def generate_image(prompt: str) -> dict:
-    """Generate an image through Cloudflare Workers AI FLUX.1 Schnell."""
+    """Generate an image through Cloudflare FLUX.2 Klein 4B (multipart REST API)."""
     prompt = str(prompt or "").strip()
     if not prompt:
         raise RuntimeError("Enter a description for the image first.")
-
     if len(prompt) > 2048:
         raise RuntimeError("Image prompts must be 2,048 characters or fewer.")
 
-    result = cloudflare_run(
-        IMAGE_MODEL,
-        {
-            "prompt": prompt,
-            "steps": 4,
-        },
-        timeout=300,
+    account_id, api_token = cloudflare_credentials()
+    url = (
+        "https://api.cloudflare.com/client/v4/accounts/"
+        f"{account_id}/ai/run/{IMAGE_MODEL}"
     )
-    image_b64 = result.get("image")
-    if not isinstance(image_b64, str) or not image_b64:
-        raise RuntimeError("Cloudflare's image model did not return image data.")
+    # FLUX.2 Klein 4B requires multipart/form-data, even for text-only generation.
+    # Four inference steps are fixed by Cloudflare for this distilled model.
+    multipart_fields = {
+        "prompt": (None, prompt),
+        "width": (None, "1024"),
+        "height": (None, "768"),
+    }
+    try:
+        response = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {api_token}"},
+            files=multipart_fields,
+            timeout=300,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Could not reach Cloudflare FLUX.2 Klein: {exc}") from exc
+
+    if not response.ok:
+        detail = response.text[:1000]
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail = payload.get("errors") or payload.get("error") or detail
+        except ValueError:
+            pass
+        raise RuntimeError(f"FLUX.2 Klein returned HTTP {response.status_code}: {detail}")
+
+    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    image_bytes = response.content
+    image_b64 = None
+
+    # Cloudflare may return the generated image as raw bytes or a JSON result.
+    if content_type == "application/json" or content_type.endswith("+json"):
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        if isinstance(payload, dict) and payload.get("success") is False:
+            detail = payload.get("errors") or payload.get("error") or payload
+            raise RuntimeError(f"FLUX.2 Klein model error: {detail}")
+        result = payload.get("result", payload) if isinstance(payload, dict) else {}
+        if isinstance(result, dict):
+            image_b64 = result.get("image") or result.get("data") or payload.get("image")
+            content_type = result.get("mime_type") or result.get("content_type") or "image/png"
+        elif isinstance(result, str):
+            image_b64 = result
+        if not isinstance(image_b64, str) or not image_b64:
+            raise RuntimeError("FLUX.2 Klein returned JSON without an image field.")
+        if image_b64.startswith("data:") and "," in image_b64:
+            data_uri_header, image_b64 = image_b64.split(",", 1)
+            if ";base64" in data_uri_header:
+                content_type = data_uri_header[5:].split(";", 1)[0]
+        import base64
+        try:
+            image_bytes = base64.b64decode(image_b64, validate=True)
+        except Exception as exc:
+            raise RuntimeError("FLUX.2 Klein returned invalid base64 image data.") from exc
+
+    if not image_bytes:
+        raise RuntimeError("FLUX.2 Klein returned an empty image.")
+
+    # Detect a usable image MIME type if the server labels the binary generically.
+    if content_type not in ("image/png", "image/jpeg", "image/webp"):
+        if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            content_type = "image/png"
+        elif image_bytes.startswith(b"\xff\xd8\xff"):
+            content_type = "image/jpeg"
+        elif image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+            content_type = "image/webp"
+        else:
+            content_type = "image/png"
+
+    import base64
+    encoded = base64.b64encode(image_bytes).decode("ascii")
     return {
-        "image": f"data:image/jpeg;base64,{image_b64}",
+        "image": f"data:{content_type};base64,{encoded}",
         "model": IMAGE_MODEL,
     }
 
@@ -329,7 +387,7 @@ if isinstance(value, dict) and value.get("id") and value["id"] != st.session_sta
         if value.get("mode") == "image":
             result = generate_image(value.get("prompt", ""))
         else:
-            result = granite_chat(value.get("messages") or [])
+            result = gemma_chat(value.get("messages") or [])
         st.session_state.reply = {"id": value["id"], **result}
     except Exception as exc:  # shown inside the Ascent interface as an error bubble
         st.session_state.reply = {"id": value["id"], "error": str(exc)}
