@@ -1,513 +1,105 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Ascent</title>
-<script>
-  /* Chromium-only: navigator.userAgentData exists in Chromium browsers only (same test Nordify uses). */
-  if (!("userAgentData" in navigator)) document.documentElement.classList.add("unsupported");
-</script>
-<link rel="stylesheet" href="./glass/liquid-glass.css">
+import os
+from pathlib import Path
+
+import requests
+import streamlit as st
+import streamlit.components.v1 as components
+
+st.set_page_config(
+    page_title="Ascent",
+    page_icon="🏔️",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ---------------------------------------------------------------- hide all Streamlit UI
+st.markdown(
+    """
 <style>
-  :root { --text: #f4f7ff; --muted: rgba(244,247,255,.68); }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; scrollbar-width: none; -ms-overflow-style: none; }
-  html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
-    color: var(--text);
-    background: #070b18 url("city.png") center / cover no-repeat fixed;
-  }
+#MainMenu, footer, header,
+[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"],
+[data-testid="stStatusWidget"], [data-testid="stAppDeployButton"], .stDeployButton,
+[data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stSidebarCollapsedControl"]
+{ display: none !important; visibility: hidden !important; }
 
-  /* Non-Chromium browsers: plain white screen with a message, everything else hidden */
-  #unsupported { display: none; }
-  html.unsupported, html.unsupported body { background: #fff; }
-  html.unsupported body > *:not(#unsupported) { display: none !important; }
-  html.unsupported #unsupported {
-    display: flex; position: fixed; inset: 0; align-items: center; justify-content: center;
-    padding: 24px; text-align: center; background: #fff; color: #111;
-    font-size: clamp(22px, 4vw, 34px); font-weight: 650;
-  }
+html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], section.main, .main
+{ background: #070b18 !important; overflow: hidden !important; }
 
-  /* Inside Streamlit the page itself cannot scroll, so a full-screen scroller does it (same look) */
-  #scroller { position: fixed; inset: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; -ms-overflow-style: none; }
-  #scroller::-webkit-scrollbar { display: none; }
+.block-container, [data-testid="stMainBlockContainer"]
+{ padding: 0 !important; margin: 0 !important; max-width: none !important; }
 
-  /* The PAGE scrolls (like Nordify's demo), so messages slide under the fixed prompt box and get refracted.
-     Nordify rule: no filter / opacity / mask / overflow:hidden / isolation on glass elements or their ancestors. */
-  #log {
-    position: relative;
-    max-width: 820px; margin: 0 auto;
-    min-height: 100dvh;
-    display: flex; flex-direction: column; gap: 14px;
-    padding: max(20px, env(safe-area-inset-top)) 14px calc(var(--comp-h, 90px) + 44px);
-  }
-  .empty { margin: auto; text-align: center; color: var(--muted); text-shadow: 0 1px 14px rgba(0,0,0,.55); }
-  .empty b { display: block; font-size: 36px; color: var(--text); letter-spacing: .06em; margin-bottom: 6px; }
+/* the Ascent interface fills the whole window */
+iframe {
+  position: fixed !important; inset: 0 !important;
+  width: 100vw !important; height: 100vh !important; height: 100dvh !important;
+  border: 0 !important; margin: 0 !important; z-index: 2147483000 !important;
+  background: transparent !important;
+}
 
-  .msg {
-    max-width: 85%; padding: 12px 18px; line-height: 1.5; border-radius: 26px;
-    white-space: pre-wrap; word-wrap: break-word; text-shadow: 0 1px 8px rgba(0,0,0,.4);
-  }
-  .msg.user { align-self: flex-end; }
-  .msg.bot  { align-self: flex-start; }
-  .msg img { display: block; max-width: 220px; max-height: 220px; border-radius: 14px; margin-bottom: 8px; }
-  .msg.err { color: #ffd0d0; }
-
-  #composer {
-    position: fixed; z-index: 10;
-    left: 14px; right: 14px; max-width: 792px; margin: 0 auto;
-    bottom: max(14px, env(safe-area-inset-bottom));
-    padding: 8px 10px; border-radius: 26px;
-    display: flex; flex-direction: column; gap: 6px;
-  }
-  #preview { display: none; gap: 8px; padding: 4px 8px 0; align-items: center; font-size: 12px; color: var(--muted); }
-  #preview img { height: 52px; border-radius: 10px; }
-  .row { display: flex; align-items: flex-end; gap: 2px; }
-  textarea {
-    flex: 1; resize: none; height: 44px; max-height: 160px; padding: 11px 8px; border: 0; outline: 0;
-    background: transparent; color: var(--text); font: inherit; line-height: 22px; text-shadow: 0 1px 8px rgba(0,0,0,.4);
-    overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none;
-  }
-  textarea::-webkit-scrollbar { display: none; width: 0; height: 0; }
-  textarea::placeholder { color: var(--muted); }
-
-  .icon {
-    width: 42px; height: 44px; flex: none; padding: 0; display: grid; place-items: center;
-    background: none; border: 0; color: var(--text); cursor: pointer; opacity: .9;
-    -webkit-tap-highlight-color: transparent; transition: opacity .15s, transform .15s;
-  }
-  .icon:hover { opacity: 1; }
-  .icon:active { transform: scale(.9); }
-  .icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-  .icon.rec { color: #ff3040; opacity: 1; }
-  #preview .icon { width: 28px; height: 28px; }
-  #preview .icon svg { width: 16px; height: 16px; }
-
-  /* Settings button + panel (the panel is NOT an ancestor of any glass element) */
-  #gear { position: fixed; z-index: 30; top: max(12px, env(safe-area-inset-top)); right: 12px; filter: drop-shadow(0 1px 6px rgba(0,0,0,.7)); }
-  #panel {
-    position: fixed; z-index: 25; display: none;
-    top: calc(max(12px, env(safe-area-inset-top)) + 48px); right: 12px;
-    width: min(350px, calc(100vw - 24px)); max-height: calc(100dvh - 120px); overflow-y: auto; overscroll-behavior: contain;
-    padding: 14px 16px 18px; border-radius: 20px; font-size: 13px;
-    background: rgba(12,15,28,.86); border: 1px solid rgba(255,255,255,.18);
-    -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
-    box-shadow: 0 20px 50px rgba(0,0,0,.45);
-  }
-  #panel.open { display: block; }
-  #panel h2 { margin: 16px 0 6px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-  #panel h2:first-child { margin-top: 0; }
-  .swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .swatch {
-    height: 52px; border-radius: 12px; border: 2px solid transparent; cursor: pointer; color: #fff;
-    font: inherit; font-size: 11px; text-shadow: 0 1px 4px rgba(0,0,0,.8); display: grid; place-items: end start; padding: 5px 7px;
-    background-size: cover; background-position: center;
-  }
-  .swatch.on { border-color: #8fb4ff; }
-  .srow { display: grid; gap: 2px; margin: 9px 0; }
-  .shead { display: flex; justify-content: space-between; color: var(--muted); }
-  .shead output { color: var(--text); font-variant-numeric: tabular-nums; }
-  input[type=range] { width: 100%; accent-color: #8fb4ff; margin: 0; }
-  .check { display: flex; align-items: center; gap: 8px; margin: 9px 0; color: var(--text); }
-  .btns { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
-  .btn { flex: 1; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08); color: var(--text); font: inherit; cursor: pointer; }
-  .btn:hover { background: rgba(255,255,255,.16); }
-  .note { color: var(--muted); font-size: 11.5px; margin: 6px 0 0; line-height: 1.4; }
-  input[type=color] { width: 100%; height: 34px; border: 0; background: none; padding: 0; margin-top: 8px; cursor: pointer; }
+/* never dim the interface while Python is working */
+[data-stale], [data-stale="true"] { opacity: 1 !important; transition: none !important; }
 </style>
-</head>
-<body>
+""",
+    unsafe_allow_html=True,
+)
 
-<div id="unsupported">Switch to a Chromium based browser!</div>
+# ---------------------------------------------------------------- the interface (frontend/index.html)
+FRONTEND = (Path(__file__).parent / "frontend").resolve()
+if not (FRONTEND / "index.html").is_file():
+    st.error(f"Missing {FRONTEND / 'index.html'}. Commit the whole 'frontend' folder to your repo.")
+    st.stop()
 
-<div id="scroller">
-<div id="log">
-  <div class="empty"><b>Ascent</b>Ask anything. Attach an image or tap the mic.</div>
-</div>
-</div>
+ascent_ui = components.declare_component("ascent_ui", path=str(FRONTEND))
 
-<button class="icon" id="gear" title="Settings" aria-label="Settings">
-  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
-</button>
-<div id="panel"></div>
 
-<div id="composer">
-  <div id="preview"><img id="prevImg" alt=""><span id="prevInfo"></span>
-    <button class="icon" id="prevX" title="Remove image" aria-label="Remove image"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-  </div>
-  <div class="row">
-    <button class="icon" id="clear" title="New chat" aria-label="New chat">
-      <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/></svg>
-    </button>
-    <button class="icon" id="attach" title="Attach image" aria-label="Attach image">
-      <svg viewBox="0 0 24 24"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.4-8.4"/></svg>
-    </button>
-    <textarea id="input" rows="1" placeholder="Message Ascent"></textarea>
-    <button class="icon" id="mic" title="Dictate" aria-label="Dictate">
-      <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-    </button>
-    <button class="icon" id="send" title="Send" aria-label="Send">
-      <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-    </button>
-  </div>
-</div>
-<input type="file" id="file" accept="image/*" hidden>
-<input type="file" id="bgfile" accept="image/*" hidden>
+# ---------------------------------------------------------------- Ollama
+def secret(name: str, default: str = "") -> str:
+    try:
+        value = st.secrets[name]
+    except Exception:
+        value = None
+    return str(value or os.environ.get(name, default))
 
-<script type="module">
-import { createLiquidGlass } from "./glass/liquid-glass.js";
 
-if (document.documentElement.classList.contains("unsupported")) throw new Error("Ascent needs a Chromium based browser.");
+def ollama_chat(messages: list) -> str:
+    key = secret("OLLAMA_API_KEY")
+    if not key:
+        raise RuntimeError("OLLAMA_API_KEY is not set in Streamlit secrets.")
+    host = secret("OLLAMA_HOST", "https://ollama.com").rstrip("/")
+    model = secret("OLLAMA_MODEL", "gemma4")
 
-const $ = (id) => document.getElementById(id);
-const log = $("log"), scroller = $("scroller"), input = $("input"), composer = $("composer"), panel = $("panel");
+    clean = []
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant", "system"):
+            continue
+        item = {"role": m["role"], "content": str(m.get("content", ""))}
+        if m.get("images"):
+            item["images"] = [str(i) for i in m["images"]]
+        clean.append(item)
+    if not clean:
+        raise RuntimeError("Empty conversation.")
 
-/* =====================================================================
-   Streamlit bridge (component protocol, no build step needed)
-   ===================================================================== */
-let pending = null;
-const stSend = (type, data = {}) => parent.postMessage({ isStreamlitMessage: true, type: "streamlit:" + type, ...data }, "*");
-addEventListener("message", (e) => {
-  if (e.source !== parent || !e.data || e.data.type !== "streamlit:render") return;
-  const r = e.data.args && e.data.args.reply;
-  if (r && pending && r.id === pending.id) { const p = pending; pending = null; p.done(r); }
-});
-stSend("componentReady", { apiVersion: 1 });
-stSend("setFrameHeight", { height: 600 });
+    r = requests.post(
+        f"{host}/api/chat",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json={"model": model, "messages": clean, "stream": False},
+        timeout=300,
+    )
+    if not r.ok:
+        raise RuntimeError(r.text[:400] or f"Ollama returned HTTP {r.status_code}")
+    return (r.json().get("message") or {}).get("content", "")
 
-function askPython(messages) {
-  return new Promise((resolve, reject) => {
-    const id = Date.now() + "-" + Math.random().toString(36).slice(2);
-    const timer = setTimeout(() => { pending = null; reject(new Error("Timed out waiting for the server.")); }, 330000);
-    pending = { id, done: (r) => { clearTimeout(timer); resolve(r); } };
-    stSend("setComponentValue", { value: { id, messages }, dataType: "json" });
-  });
-}
 
-/* =====================================================================
-   Settings state
-   Options go to createLiquidGlass(); vars are Nordify's --lg-* CSS custom
-   properties. A var only overrides Nordify's own value once you move its slider.
-   ===================================================================== */
-const ASCENT_DEFAULTS = {
-  radius: 23, rim: 3, blur: 2, saturate: 1, reflect: true, reflectStrength: 2.5, dark: true,
-  vars: {
-    "--lg-glint-exp": 0.6, "--lg-glint-sat": 0.5,
-    "--lg-rim-exp": 1.8, "--lg-rim-sat": 3,
-    "--lg-fold-exp": 1, "--lg-fold-sat": 0.8,
-    "--lg-rim-w": 0, "--lg-rim-fade": 0,
-    "--lg-spec": 0, "--lg-underlay": 0,
-    "--lg-shadow-o": 0, "--lg-caustic-o": 0,
-  },
-};
-const KEY = "ascent.settings.v1";
-let S = { ...structuredClone(ASCENT_DEFAULTS), bg: { id: "city" } };
-let uploadData = null;
-try {
-  const raw = localStorage.getItem(KEY);
-  if (raw) S = { ...S, ...JSON.parse(raw) };
-  uploadData = localStorage.getItem(KEY + ".bg");
-  if (S.bg.id === "upload" && !uploadData) S.bg = { id: "city" };
-} catch {}
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+# ---------------------------------------------------------------- glue
+st.session_state.setdefault("reply", None)
+st.session_state.setdefault("handled", None)
 
-const OPT_DEFS = [
-  { k: "radius", label: "Corner radius", min: 8, max: 40, step: 1, unit: "px" },
-  { k: "rim", label: "Rim", min: 0.2, max: 3, step: 0.05 },
-  { k: "blur", label: "Frost (blur)", min: 0, max: 12, step: 0.1, unit: "px" },
-  { k: "saturate", label: "Saturation", min: 0.5, max: 2.5, step: 0.05 },
-  { k: "reflectStrength", label: "Reflection strength", min: 0, max: 6, step: 0.1 },
-];
-/* light / dark = Nordify's own values for each tuning (from liquid-glass.css) */
-const VAR_DEFS = [
-  { k: "--lg-glint-exp", label: "Lit edge exposure (glint)", min: 0.6, max: 2.4, step: 0.01, light: 1.35, dark: 1.45 },
-  { k: "--lg-glint-sat", label: "Lit edge saturation (glint)", min: 0.5, max: 4, step: 0.05, light: 3.1, dark: 2.0 },
-  { k: "--lg-rim-exp", label: "Rim exposure", min: 0.4, max: 1.8, step: 0.01, light: 0.84, dark: 1.25 },
-  { k: "--lg-rim-sat", label: "Rim saturation", min: 0.5, max: 3, step: 0.05, light: 2.2, dark: 1.3 },
-  { k: "--lg-fold-exp", label: "Fold exposure", min: 0.8, max: 1.6, step: 0.01, light: 1.08, dark: 1.08 },
-  { k: "--lg-fold-sat", label: "Fold saturation", min: 0.8, max: 2.2, step: 0.01, light: 1.3, dark: 1.3 },
-  { k: "--lg-rim-w", label: "Rim line width", min: 0, max: 4, step: 0.1, unit: "px", light: 0.7, dark: 0.7 },
-  { k: "--lg-rim-fade", label: "Rim line fade", min: 0, max: 8, step: 0.1, unit: "px", light: 2, dark: 2 },
-  { k: "--lg-spec", label: "Edge reflection (spec)", min: 0, max: 0.7, step: 0.01, light: 0.13, dark: 0.38 },
-  { k: "--lg-underlay", label: "White veil (underlay)", min: 0, max: 0.5, step: 0.01, light: 0.14, dark: 0.03 },
-  { k: "--lg-shadow-o", label: "Shadow opacity", min: 0, max: 1, step: 0.01, light: 0.35, dark: 0 },
-  { k: "--lg-caustic-o", label: "Caustic opacity", min: 0, max: 1, step: 0.01, light: 0.7, dark: 0 },
-];
-const VAR_BY_KEY = Object.fromEntries(VAR_DEFS.map((d) => [d.k, d]));
+value = ascent_ui(reply=st.session_state.reply, key="ascent", default=None)
 
-/* =====================================================================
-   Nordify liquid glass on the prompt box and every message
-   ===================================================================== */
-const hosts = () => [composer, ...log.querySelectorAll(".msg")];
-
-function makeGlass(el) {
-  if (S.dark) el.setAttribute("data-lg-dark", ""); else el.removeAttribute("data-lg-dark");
-  try {
-    el._g = createLiquidGlass(el, {
-      radius: S.radius, rim: S.rim, blur: S.blur, saturate: S.saturate,
-      reflect: S.reflect, reflectStrength: S.reflectStrength,
-    });
-  } catch (e) { console.warn("Liquid glass failed:", e); el._g = null; }
-}
-makeGlass(composer);
-
-/* Messages: glass only while near the screen (keeps long chats fast) */
-const io = new IntersectionObserver((entries) => {
-  for (const en of entries) {
-    const el = en.target;
-    if (en.isIntersecting) { if (!el._g) makeGlass(el); }
-    else if (el._g) { el._g.destroy(); el._g = null; }
-  }
-}, { root: scroller, rootMargin: "700px 0px" });
-
-/* Option changes need the glass rebuilt (they are constructor options) */
-let rebuildTimer;
-function rebuild() {
-  for (const h of hosts()) if (h._g) { h._g.destroy(); h._g = null; makeGlass(h); }
-}
-const scheduleRebuild = () => { clearTimeout(rebuildTimer); rebuildTimer = setTimeout(rebuild, 120); };
-
-/* CSS variable overrides: one rule on the host and on its cover sibling */
-const varStyle = document.createElement("style");
-document.head.append(varStyle);
-let varRaf = 0;
-function applyVars() {
-  const decl = Object.entries(S.vars).map(([k, v]) => `${k}:${v}${VAR_BY_KEY[k]?.unit || ""}`).join(";");
-  varStyle.textContent = decl ? `.lg-host,.lg-host + .lg-cover{${decl}}` : "";
-  for (const h of hosts()) h._g?.update();
-}
-const scheduleVars = () => { cancelAnimationFrame(varRaf); varRaf = requestAnimationFrame(applyVars); };
-
-new ResizeObserver(() => document.documentElement.style.setProperty("--comp-h", composer.offsetHeight + "px")).observe(composer);
-
-/* =====================================================================
-   Background
-   ===================================================================== */
-const BGS = [
-  { id: "city", name: "City", css: 'url("city.png") center / cover no-repeat' },
-  { id: "aurora", name: "Aurora", css: "linear-gradient(135deg,#0b1d2e 0%,#1b5e6b 35%,#6a3cc4 70%,#d05ce3 100%)" },
-  { id: "sunset", name: "Sunset", css: "linear-gradient(160deg,#1b1038 0%,#7a2a6e 40%,#ff6b4a 80%,#ffc46b 100%)" },
-  { id: "ocean", name: "Ocean", css: "linear-gradient(160deg,#021b3a 0%,#0a4f8f 50%,#27c2c9 100%)" },
-  { id: "forest", name: "Forest", css: "linear-gradient(160deg,#06140f 0%,#14513a 55%,#8bd18a 100%)" },
-  { id: "midnight", name: "Midnight", css: "linear-gradient(160deg,#05060d 0%,#14183a 60%,#2b2f6b 100%)" },
-];
-function applyBg() {
-  const b = S.bg;
-  let css;
-  if (b.id === "color") css = b.color || "#101828";
-  else if (b.id === "upload" && uploadData) css = `url("${uploadData}") center / cover no-repeat fixed`;
-  else css = (BGS.find((x) => x.id === b.id) || BGS[0]).css + " fixed";
-  document.body.style.background = css;
-  panel.querySelectorAll(".swatch").forEach((s) => s.classList.toggle("on", s.dataset.id === b.id));
-  for (const h of hosts()) h._g?.refresh?.();
-}
-
-/* Image compressor: max side px, JPEG quality */
-async function compressImage(file, maxSide = 1024, quality = 0.72) {
-  const bmp = await createImageBitmap(file);
-  const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
-  const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
-  const c = document.createElement("canvas");
-  c.width = w; c.height = h;
-  const ctx = c.getContext("2d");
-  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
-  ctx.drawImage(bmp, 0, 0, w, h);
-  const dataUrl = c.toDataURL("image/jpeg", quality);
-  return { dataUrl, base64: dataUrl.split(",")[1], bytes: Math.round(dataUrl.length * 0.75) };
-}
-const kb = (n) => (n / 1024).toFixed(0) + " KB";
-
-/* =====================================================================
-   Settings panel
-   ===================================================================== */
-const syncers = [];
-const fmt = (v) => String(Math.round(v * 100) / 100);
-function h(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
-function heading(t) { panel.append(h("h2", "", t)); }
-
-function addSlider(def, get, set) {
-  const row = h("label", "srow"), head = h("span", "shead"), name = h("span", "", def.label), out = h("output");
-  head.append(name, out);
-  const inp = h("input"); inp.type = "range"; inp.min = def.min; inp.max = def.max; inp.step = def.step;
-  const show = (v) => { out.textContent = fmt(v) + (def.unit || ""); };
-  inp.oninput = () => { const v = parseFloat(inp.value); set(v); show(v); };
-  row.append(head, inp); panel.append(row);
-  syncers.push(() => { const v = get(); inp.value = v; show(v); });
-}
-function addCheck(label, get, set) {
-  const row = h("label", "check"), cb = h("input"); cb.type = "checkbox";
-  cb.onchange = () => set(cb.checked);
-  row.append(cb, document.createTextNode(label)); panel.append(row);
-  syncers.push(() => { cb.checked = get(); });
-}
-const syncAll = () => syncers.forEach((f) => f());
-
-/* Background section */
-heading("Background");
-const grid = h("div", "swatches");
-for (const b of BGS) {
-  const s = h("button", "swatch", b.name); s.dataset.id = b.id; s.style.background = b.css;
-  s.onclick = () => { S.bg = { id: b.id }; save(); applyBg(); };
-  grid.append(s);
-}
-const up = h("button", "swatch", "Upload…"); up.dataset.id = "upload"; up.style.background = "rgba(255,255,255,.1)";
-up.onclick = () => $("bgfile").click();
-grid.append(up);
-panel.append(grid);
-const color = h("input"); color.type = "color"; color.value = "#101828"; color.title = "Solid colour";
-color.oninput = () => { S.bg = { id: "color", color: color.value }; save(); applyBg(); };
-panel.append(color);
-const bgNote = h("p", "note", "");
-panel.append(bgNote);
-$("bgfile").onchange = async (e) => {
-  const f = e.target.files[0]; e.target.value = "";
-  if (!f) return;
-  try {
-    const out = await compressImage(f, 1920, 0.82);
-    uploadData = out.dataUrl; S.bg = { id: "upload" }; bgNote.textContent = "";
-    try { localStorage.setItem(KEY + ".bg", uploadData); } catch { bgNote.textContent = "Too big to remember after a refresh; it stays until you reload."; }
-    save(); applyBg();
-  } catch { alert("Couldn't read that image."); }
-};
-
-/* Nordify createLiquidGlass options */
-heading("Liquid glass options");
-for (const d of OPT_DEFS) addSlider(d, () => S[d.k], (v) => { S[d.k] = v; save(); scheduleRebuild(); });
-addCheck("Reflect (mirror surroundings into the rim)", () => S.reflect, (v) => { S.reflect = v; save(); rebuild(); });
-addCheck("Dark tuning (data-lg-dark)", () => S.dark, (v) => {
-  S.dark = v; save();
-  for (const el of hosts()) { if (v) el.setAttribute("data-lg-dark", ""); else el.removeAttribute("data-lg-dark"); }
-  syncAll(); scheduleVars();
-});
-
-/* Nordify CSS custom properties */
-heading("Light & edge (CSS variables)");
-for (const d of VAR_DEFS) {
-  addSlider(d, () => S.vars[d.k] ?? (S.dark ? d.dark : d.light), (v) => { S.vars[d.k] = v; save(); scheduleVars(); });
-}
-
-$("gear").onclick = () => panel.classList.toggle("open");
-addEventListener("keydown", (e) => { if (e.key === "Escape") panel.classList.remove("open"); });
-
-syncAll(); applyVars(); applyBg();
-
-/* =====================================================================
-   Chat
-   ===================================================================== */
-const toBottom = () => scroller.scrollTo(0, scroller.scrollHeight);
-const nearBottom = () => scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 160;
-
-let history = [];
-let pendingImage = null;
-let busy = false;
-
-$("attach").onclick = () => $("file").click();
-$("file").onchange = async (e) => {
-  const f = e.target.files[0]; e.target.value = "";
-  if (!f) return;
-  try {
-    const out = await compressImage(f);
-    pendingImage = out;
-    $("prevImg").src = out.dataUrl;
-    $("prevInfo").textContent = `${kb(f.size)} → ${kb(out.bytes)}`;
-    $("preview").style.display = "flex";
-  } catch { alert("Couldn't read that image."); }
-};
-$("prevX").onclick = () => { pendingImage = null; $("preview").style.display = "none"; };
-
-/* Dictation */
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, listening = false, baseText = "";
-if (!SR) { $("mic").style.display = "none"; }
-else {
-  rec = new SR();
-  rec.continuous = true; rec.interimResults = true; rec.lang = navigator.language || "en-US";
-  rec.onresult = (e) => {
-    let t = "";
-    for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-    input.value = (baseText + " " + t).trim(); autosize();
-  };
-  rec.onend = () => { listening = false; $("mic").classList.remove("rec"); };
-  rec.onerror = () => rec.onend();
-  $("mic").onclick = () => {
-    if (listening) { rec.stop(); return; }
-    baseText = input.value; listening = true; $("mic").classList.add("rec");
-    try { rec.start(); } catch {}
-  };
-}
-
-function autosize() {
-  input.style.height = "44px";
-  input.style.height = Math.min(input.scrollHeight, 160) + "px";
-  input.style.overflowY = input.scrollHeight > 160 ? "auto" : "hidden";
-}
-input.addEventListener("input", autosize);
-input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
-$("send").onclick = send;
-
-$("clear").onclick = () => {
-  if (busy) return;
-  log.querySelectorAll(".msg").forEach((m) => { io.unobserve(m); m._g?.destroy(); });
-  log.innerHTML = '<div class="empty"><b>Ascent</b>Ask anything. Attach an image or tap the mic.</div>';
-  history = [];
-  scroller.scrollTo(0, 0);
-};
-
-function addMsg(role, text, img) {
-  log.querySelector(".empty")?.remove();
-  const d = document.createElement("div");
-  d.className = `msg ${role}`;
-  if (img) { const i = document.createElement("img"); i.src = img; d.appendChild(i); }
-  const s = document.createElement("span"); s.textContent = text; d.appendChild(s);
-  log.appendChild(d);
-  io.observe(d);
-  return s;
-}
-
-/* The reply arrives whole from Python; reveal it quickly so it still feels like streaming */
-function reveal(el, text) {
-  return new Promise((done) => {
-    if (!text) { el.textContent = "(empty reply)"; return done(); }
-    let i = 0; const step = Math.max(3, Math.ceil(text.length / 80));
-    const t = setInterval(() => {
-      const stick = nearBottom();
-      i = Math.min(text.length, i + step); el.textContent = text.slice(0, i);
-      if (stick) toBottom();
-      if (i >= text.length) { clearInterval(t); done(); }
-    }, 20);
-  });
-}
-
-async function send() {
-  const text = input.value.trim();
-  if ((!text && !pendingImage) || busy) return;
-  if (listening) rec.stop();
-  busy = true;
-
-  const msg = { role: "user", content: text || "Describe this image." };
-  if (pendingImage) msg.images = [pendingImage.base64];
-  addMsg("user", msg.content, pendingImage?.dataUrl);
-  history.push(msg);
-
-  input.value = ""; autosize();
-  pendingImage = null; $("preview").style.display = "none";
-
-  const out = addMsg("bot", "…");
-  toBottom();
-  try {
-    const r = await askPython(history);
-    if (r.error) throw new Error(r.error);
-    const reply = r.text || "";
-    await reveal(out, reply);
-    history.push({ role: "assistant", content: reply });
-  } catch (e) {
-    out.parentElement.classList.add("err");
-    out.textContent = "Error: " + e.message;
-    history.pop();
-  } finally { busy = false; }
-}
-</script>
-</body>
-</html>
+if isinstance(value, dict) and value.get("id") and value["id"] != st.session_state.handled:
+    st.session_state.handled = value["id"]
+    try:
+        st.session_state.reply = {"id": value["id"], "text": ollama_chat(value.get("messages") or [])}
+    except Exception as e:  # shown inside the Ascent interface as an error bubble
+        st.session_state.reply = {"id": value["id"], "error": str(e)}
+    st.rerun()
