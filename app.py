@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 
 st.set_page_config(
     page_title="ABC123",
-    page_icon="🏔️",
+    page_icon="🍕",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -19,7 +19,8 @@ st.markdown(
 #MainMenu, footer, header,
 [data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"],
 [data-testid="stStatusWidget"], [data-testid="stAppDeployButton"], .stDeployButton,
-[data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stSidebarCollapsedControl"]
+[data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stSidebarCollapsedControl"],
+[class*="viewerBadge"], [class*="profileContainer"], [class*="profilePreview"], a[href*="streamlit.io"]
 { display: none !important; visibility: hidden !important; }
 
 html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], section.main, .main
@@ -100,6 +101,6 @@ if isinstance(value, dict) and value.get("id") and value["id"] != st.session_sta
     st.session_state.handled = value["id"]
     try:
         st.session_state.reply = {"id": value["id"], "text": ollama_chat(value.get("messages") or [])}
-    except Exception as e:  # shown inside the ABC123 interface as an error bubble
+    except Exception as e:  # shown inside the Ascent interface as an error bubble
         st.session_state.reply = {"id": value["id"], "error": str(e)}
     st.rerun()
