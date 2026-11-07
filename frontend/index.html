@@ -144,6 +144,52 @@ if (document.documentElement.classList.contains("unsupported")) throw new Error(
 const $ = (id) => document.getElementById(id);
 const log = $("log"), scroller = $("scroller"), input = $("input"), composer = $("composer");
 
+
+/* Hide only Streamlit's injected hosting/profile badge in the parent page. */
+function hideStreamlitBranding() {
+  try {
+    const parentDoc = window.parent.document;
+    const selectors = [
+      'a[href*="streamlit.io"]',
+      'a[href*="streamlit.app"]',
+      '[class*="viewerBadge"]',
+      '[class*="profileContainer"]',
+      '[class*="profilePreview"]',
+      '[data-testid*="viewerBadge"]'
+    ].join(",");
+
+    parentDoc.querySelectorAll(selectors).forEach((el) => {
+      const label = [
+        el.textContent || "",
+        el.getAttribute("aria-label") || "",
+        el.getAttribute("title") || ""
+      ].join(" ").toLowerCase();
+      const href = (el.getAttribute("href") || "").toLowerCase();
+      if (
+        href.includes("streamlit.io") ||
+        href.includes("streamlit.app") ||
+        label.includes("sohanmsireddy") ||
+        label.includes("hosted with streamlit")
+      ) {
+        el.style.setProperty("display", "none", "important");
+      }
+    });
+  } catch {
+    /* Parent-page access may be restricted by the hosting environment. */
+  }
+}
+
+hideStreamlitBranding();
+try {
+  const badgeObserver = new MutationObserver(hideStreamlitBranding);
+  badgeObserver.observe(window.parent.document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+} catch {
+  /* Keep the app working even if the host blocks parent-page observation. */
+}
+
 /* =====================================================================
    Streamlit bridge (component protocol, no build step needed)
    ===================================================================== */
