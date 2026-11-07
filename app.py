@@ -6,7 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 st.set_page_config(
-    page_title="Ascent",
+    page_title="ABC123",
     page_icon="🏔️",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -100,6 +100,6 @@ if isinstance(value, dict) and value.get("id") and value["id"] != st.session_sta
     st.session_state.handled = value["id"]
     try:
         st.session_state.reply = {"id": value["id"], "text": ollama_chat(value.get("messages") or [])}
-    except Exception as e:  # shown inside the Ascent interface as an error bubble
+    except Exception as e:  # shown inside the ABC123 interface as an error bubble
         st.session_state.reply = {"id": value["id"], "error": str(e)}
     st.rerun()
