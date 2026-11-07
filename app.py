@@ -183,102 +183,149 @@ def _content_to_text(content) -> str:
     return str(content or "").strip()
 
 
+
 def gemma_chat(messages: list) -> dict:
-    """Run chat through Cloudflare's OpenAI-compatible Gemma 4 endpoint."""
+    """Send text and image inputs directly to Cloudflare Gemma 4."""
+
     clean = []
+
     for message in messages:
         if not isinstance(message, dict):
             continue
+
         role = message.get("role")
         if role not in ("system", "user", "assistant"):
             continue
 
-        content = str(message.get("content", "") or "")
-        image_descriptions = []
-        for index, image_b64 in enumerate(message.get("images") or [], start=1):
-            if not isinstance(image_b64, str) or not image_b64:
-                continue
-            description = describe_image(
-                image_b64,
-                content.strip() or "Describe this image in useful detail.",
-            )
-            image_descriptions.append(f"Image {index} analysis: {description}")
+        text = str(message.get("content", "") or "")
+        images = message.get("images") or []
 
-        if image_descriptions:
-            content = (content + "\n\n" if content else "") + "\n".join(image_descriptions)
-        clean.append({"role": role, "content": content})
+        if role == "user" and images:
+            parts = []
+
+            if text:
+                parts.append({
+                    "type": "text",
+                    "text": text
+                })
+
+            for image_b64 in images:
+                if not isinstance(image_b64, str) or not image_b64:
+                    continue
+
+                # Accept either raw base64 or an existing data URL.
+                if image_b64.startswith("data:"):
+                    image_url = image_b64
+                else:
+                    image_url = (
+                        "data:image/jpeg;base64," + image_b64
+                    )
+
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image_url,
+                        "detail": "auto"
+                    }
+                })
+
+            clean.append({
+                "role": "user",
+                "content": parts
+            })
+
+        else:
+            clean.append({
+                "role": role,
+                "content": text
+            })
 
     if not clean:
         raise RuntimeError("The conversation is empty.")
 
-    if not any(message["role"] == "system" for message in clean):
-        clean.insert(
-            0,
-            {
-                "role": "system",
-                "content": (
-                    "You are a helpful, clear, and accurate assistant. "
-                    "Use the supplied image descriptions when the user attaches images. "
-                    "Do not claim to see image pixels directly; image descriptions are "
-                    "provided by a separate vision model."
-                ),
-            },
-        )
+    if not any(m["role"] == "system" for m in clean):
+        clean.insert(0, {
+            "role": "system",
+            "content": (
+                "You are a helpful, accurate AI assistant. "
+                "You can analyze uploaded images directly. "
+                "Answer questions about their contents."
+            )
+        })
 
     account_id, api_token = cloudflare_credentials()
+
     url = (
         "https://api.cloudflare.com/client/v4/accounts/"
         f"{account_id}/ai/v1/chat/completions"
     )
+
     try:
         response = requests.post(
             url,
             headers={
                 "Authorization": f"Bearer {api_token}",
-                "Content-Type": "application/json",
+                "Content-Type": "application/json"
             },
             json={
-                "model": CHAT_MODEL,
+                "model": "@cf/google/gemma-4-26b-a4b-it",
                 "messages": clean,
                 "max_completion_tokens": 2048,
                 "temperature": 0.6,
-                "stream": False,
+                "stream": False
             },
-            timeout=300,
+            timeout=300
         )
     except requests.RequestException as exc:
-        raise RuntimeError(f"Could not reach Cloudflare Gemma 4: {exc}") from exc
+        raise RuntimeError(
+            f"Cloudflare connection failed: {exc}"
+        ) from exc
 
     try:
-        payload = response.json()
+        data = response.json()
     except ValueError:
         raise RuntimeError(
-            f"Cloudflare returned a non-JSON response (HTTP {response.status_code}): "
-            f"{response.text[:600]}"
-        ) from None
-
-    if not response.ok:
-        detail = payload.get("error", payload.get("errors", payload))
-        raise RuntimeError(f"Cloudflare Gemma 4 returned HTTP {response.status_code}: {detail}")
-
-    choices = payload.get("choices") or []
-    if not choices:
-        raise RuntimeError(
-            "Gemma 4 returned no choices. Cloudflare response keys: "
-            + ", ".join(str(key) for key in payload.keys())
+            f"Invalid Cloudflare response: {response.text[:500]}"
         )
 
-    choice = choices[0] if isinstance(choices[0], dict) else {}
-    message = choice.get("message") or {}
-    answer = _content_to_text(message.get("content"))
-    if not answer:
-        reason = choice.get("finish_reason") or "not provided"
-        raise RuntimeError(f"Gemma 4 returned an empty message (finish reason: {reason}).")
+    if not response.ok:
+        raise RuntimeError(
+            f"Gemma 4 HTTP {response.status_code}: "
+            f"{data.get('error', data.get('errors', data))}"
+        )
 
-    thinking = _content_to_text(
-        message.get("reasoning") or message.get("reasoning_content") or ""
+    choices = data.get("choices", [])
+
+    if not choices:
+        raise RuntimeError(
+            f"Gemma 4 returned no choices: {data}"
+        )
+
+    message = choices[0].get("message", {})
+    answer = message.get("content", "")
+
+    if isinstance(answer, list):
+        answer = "\n".join(
+            item.get("text", "")
+            for item in answer
+            if isinstance(item, dict)
+        )
+
+    answer = str(answer or "").strip()
+
+    if not answer:
+        raise RuntimeError("Gemma 4 returned an empty response.")
+
+    thinking = str(
+        message.get("reasoning", "")
+        or message.get("reasoning_content", "")
     )
-    return {"text": answer, "thinking": thinking, "images": []}
+
+    return {
+        "text": answer,
+        "thinking": thinking,
+        "images": []
+    }
 
 
 def generate_image(prompt: str) -> dict:
