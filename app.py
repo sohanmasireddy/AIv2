@@ -1,4 +1,3 @@
-
 import ipaddress
 import json
 import os
@@ -89,7 +88,6 @@ ascent_ui = components.declare_component("ascent_ui", path=str(FRONTEND))
 MODEL = "@cf/google/gemma-4-26b-a4b-it"
 CLOUDFLARE_API = "https://api.cloudflare.com/client/v4"
 USER_AGENT = "AIv2/1.0 (web research assistant)"
-
 SYSTEM_PROMPT = """You are ABC123, a helpful, clear, and accurate AI assistant.
 
 You can use tools to search the public web, read web pages, and find images.
@@ -167,13 +165,15 @@ def explain_cloudflare_error(status_code: int, detail: str) -> str:
 
 
 def _cloudflare_run(messages: list[dict], tools: list[dict] | None = None) -> dict:
+    """Call Cloudflare's OpenAI-compatible Chat Completions endpoint."""
     account_id, api_token = cloudflare_credentials()
-    endpoint = f"{CLOUDFLARE_API}/accounts/{account_id}/ai/run/{MODEL}"
+    endpoint = f"{CLOUDFLARE_API}/accounts/{account_id}/ai/v1/chat/completions"
     body: dict[str, Any] = {
+        "model": MODEL,
         "messages": messages,
         "stream": False,
         "temperature": 0.55,
-        "max_tokens": 3072,
+        "max_completion_tokens": 3072,
         "chat_template_kwargs": {
             "enable_thinking": True,
             "clear_thinking": False,
@@ -181,6 +181,8 @@ def _cloudflare_run(messages: list[dict], tools: list[dict] | None = None) -> di
     }
     if tools:
         body["tools"] = tools
+        body["tool_choice"] = "auto"
+        body["parallel_tool_calls"] = False
 
     try:
         response = requests.post(
@@ -211,13 +213,9 @@ def _cloudflare_run(messages: list[dict], tools: list[dict] | None = None) -> di
     if isinstance(payload, dict) and payload.get("success") is False:
         detail = _cloudflare_error_detail(payload, "The model request failed.")
         raise RuntimeError("Cloudflare model error: " + detail)
-
-    result = payload.get("result", payload) if isinstance(payload, dict) else payload
-    if isinstance(result, str):
-        return {"response": result, "tool_calls": []}
-    if not isinstance(result, dict):
-        raise RuntimeError("Cloudflare returned an unexpected model response.")
-    return result
+    if not isinstance(payload, dict):
+        raise RuntimeError("Cloudflare returned an unexpected response format.")
+    return payload
 
 
 # -----------------------------------------------------------------------------
@@ -526,45 +524,50 @@ def image_search(query: str, max_results: int = 5) -> dict:
 # -----------------------------------------------------------------------------
 TOOLS = [
     {
-        "name": "web_search",
-        "description": (
-            "Search the live public web for current or requested information. "
-            "Use for recent facts, news, current products, documentation, or whenever the user asks to search online."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "A concise web search query."},
-                "max_results": {"type": "integer", "minimum": 1, "maximum": 8},
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": (
+                "Search the live public web for current or requested information. "
+                "Use for recent facts, news, current products, documentation, or whenever the user asks to search online."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "A concise web search query."},
+                    "max_results": {"type": "integer", "minimum": 1, "maximum": 8},
+                },
+                "required": ["query"],
             },
-            "required": ["query"],
         },
     },
     {
-        "name": "web_fetch",
-        "description": (
-            "Open and read a public HTTP or HTTPS web page. Use this after web_search to inspect source pages in more detail."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "url": {"type": "string", "description": "The full URL of a page returned by web_search or supplied by the user."},
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": "Open and read a public HTTP or HTTPS web page, usually one returned by web_search.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The full URL of a page returned by web_search or supplied by the user."},
+                },
+                "required": ["url"],
             },
-            "required": ["url"],
         },
     },
     {
-        "name": "image_search",
-        "description": (
-            "Find relevant public images on Wikimedia Commons. Use when the user asks to see pictures or when visual examples would materially help."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "What images to find."},
-                "max_results": {"type": "integer", "minimum": 1, "maximum": 6},
+        "type": "function",
+        "function": {
+            "name": "image_search",
+            "description": "Find relevant public images on Wikimedia Commons. Use when the user asks to see pictures or when images materially help.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What images to find."},
+                    "max_results": {"type": "integer", "minimum": 1, "maximum": 6},
+                },
+                "required": ["query"],
             },
-            "required": ["query"],
         },
     },
 ]
@@ -582,21 +585,71 @@ def _parse_tool_arguments(value: Any) -> dict:
     return {}
 
 
+def _completion_message(result: dict) -> tuple[dict, dict]:
+    """Return the assistant message and first choice metadata from either supported response shape."""
+    choices = result.get("choices")
+    if isinstance(choices, list) and choices:
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+        return message, choice
+    # Compatibility with Workers AI's native /ai/run response object.
+    message = {
+        "role": "assistant",
+        "content": result.get("response") or result.get("text") or "",
+        "tool_calls": result.get("tool_calls") or [],
+    }
+    return message, {"finish_reason": None}
+
+
+def _content_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        pieces = []
+        for part in value:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                pieces.append(part["text"])
+        return "\n".join(pieces)
+    return ""
+
+
+def _remove_inline_image_payloads(text: str) -> str:
+    """Never let data-URI or long base64 image payloads leak into chat text."""
+    if not text:
+        return ""
+    text = re.sub(
+        r"(?is)!\[[^\]]*\]\(\s*data:image/[^;]+;base64,[A-Za-z0-9+/=\s]+\)",
+        "[Image result is displayed below.]",
+        text,
+    )
+    text = re.sub(
+        r"(?is)data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+",
+        "[image data omitted]",
+        text,
+    )
+    # Catch bare long base64 blobs accidentally emitted by a model. Restrict to
+    # strings of 512+ base64 characters so normal words and short identifiers survive.
+    text = re.sub(
+        r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{512,}={0,2}(?![A-Za-z0-9+/])",
+        "[binary image data omitted]",
+        text,
+    )
+    text = re.sub(r"(?is)<think>.*?</think>", "", text)
+    return text.strip()
+
+
 def _extract_answer(result: dict) -> str:
-    answer = result.get("response") or result.get("text") or ""
-    if not answer and isinstance(result.get("choices"), list) and result["choices"]:
-        first = result["choices"][0] or {}
-        message = first.get("message") or {}
-        answer = message.get("content") or ""
-    if isinstance(answer, list):
-        answer = "\n".join(
-            part.get("text", "") for part in answer
-            if isinstance(part, dict) and isinstance(part.get("text"), str)
-        )
-    answer = str(answer or "").strip()
-    # Do not render a raw hidden reasoning block if a provider happens to include one in text.
-    answer = re.sub(r"(?is)<think>.*?</think>", "", answer).strip()
-    return answer
+    message, _choice = _completion_message(result)
+    answer = _content_text(message.get("content"))
+    if not answer:
+        answer = str(result.get("response") or result.get("text") or "")
+    return _remove_inline_image_payloads(answer)
+
+
+def _extract_tool_calls(result: dict) -> list[dict]:
+    message, _choice = _completion_message(result)
+    calls = message.get("tool_calls") or result.get("tool_calls") or []
+    return calls if isinstance(calls, list) else []
 
 
 def _run_tool(name: str, arguments: dict) -> tuple[dict, list[dict], list[dict], str]:
@@ -644,7 +697,7 @@ def _run_tool(name: str, arguments: dict) -> tuple[dict, list[dict], list[dict],
 
 
 def gemma_chat(frontend_messages: list[dict]) -> dict:
-    """Run Gemma 4 with thinking enabled and bounded web/image tool calls."""
+    """Run Gemma 4 with image input, function calling, web search, and safe activity summaries."""
     clean_messages: list[dict] = []
     for item in frontend_messages:
         if not isinstance(item, dict):
@@ -655,14 +708,18 @@ def gemma_chat(frontend_messages: list[dict]) -> dict:
         content = str(item.get("content", "") or "")
         images = item.get("images") or []
         if role == "user" and images:
-            parts: list[dict] = []
-            parts.append({"type": "text", "text": content or "Describe this image."})
+            parts: list[dict] = [{"type": "text", "text": content or "Describe this image."}]
             for image in images:
-                if isinstance(image, str) and image.strip():
-                    value = image.strip()
-                    if not value.startswith("data:"):
-                        value = "data:image/jpeg;base64," + value
-                    parts.append({"type": "image", "image": value})
+                if not isinstance(image, str) or not image.strip():
+                    continue
+                value = image.strip()
+                if not value.startswith("data:"):
+                    value = "data:image/jpeg;base64," + value
+                # OpenAI-compatible multimodal content part supported by Cloudflare.
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": value, "detail": "auto"},
+                })
             clean_messages.append({"role": role, "content": parts})
         else:
             clean_messages.append({"role": role, "content": content})
@@ -680,46 +737,78 @@ def gemma_chat(frontend_messages: list[dict]) -> dict:
     sources_by_url: dict[str, dict] = {}
     images_by_url: dict[str, dict] = {}
     activity: list[str] = []
-    final_result: dict = {}
+    final_message: dict = {}
     max_tool_rounds = 4
 
-    for _round in range(max_tool_rounds + 1):
-        result = _cloudflare_run(clean_messages, tools=TOOLS)
-        final_result = result
-        tool_calls = result.get("tool_calls") or []
+    for tool_round in range(max_tool_rounds + 1):
+        result = _cloudflare_run(clean_messages, tools=TOOLS if tool_round < max_tool_rounds else None)
+        assistant_message, choice = _completion_message(result)
+        tool_calls = _extract_tool_calls(result)
+
         if not tool_calls:
+            final_message = assistant_message
+            answer = _extract_answer(result)
+            # Gemma may sometimes return finish_reason=tool_calls but omit the calls
+            # in a non-stream response. Retry once without tools to obtain user text.
+            if not answer and choice.get("finish_reason") == "tool_calls":
+                clean_messages.append({
+                    "role": "user",
+                    "content": "Please provide your final answer in normal text. Do not call tools.",
+                })
+                fallback = _cloudflare_run(clean_messages, tools=None)
+                final_message, _ = _completion_message(fallback)
+                answer = _extract_answer(fallback)
             break
 
-        if _round >= max_tool_rounds:
+        if tool_round >= max_tool_rounds:
             clean_messages.append({
                 "role": "user",
                 "content": "Finish your answer now using the research already collected. Do not call more tools.",
             })
-            final_result = _cloudflare_run(clean_messages, tools=None)
+            fallback = _cloudflare_run(clean_messages, tools=None)
+            final_message, _ = _completion_message(fallback)
             break
 
-        for call in tool_calls[:3]:
+        # Preserve the assistant tool-call message exactly in the conversation history.
+        normalized_calls: list[dict] = []
+        calls_to_execute: list[tuple[str, dict, str]] = []
+        for index, call in enumerate(tool_calls[:3]):
             if not isinstance(call, dict):
                 continue
             function_data = call.get("function") if isinstance(call.get("function"), dict) else {}
-            name = call.get("name") or function_data.get("name") or ""
-            arguments = _parse_tool_arguments(call.get("arguments", function_data.get("arguments", {})))
+            name = function_data.get("name") or call.get("name") or ""
+            raw_arguments = function_data.get("arguments", call.get("arguments", {}))
+            arguments = _parse_tool_arguments(raw_arguments)
+            call_id = str(call.get("id") or f"call_{tool_round}_{index}")
+            argument_text = raw_arguments if isinstance(raw_arguments, str) else json.dumps(arguments, ensure_ascii=False)
+            normalized_calls.append({
+                "id": call_id,
+                "type": "function",
+                "function": {"name": name, "arguments": argument_text},
+            })
+            calls_to_execute.append((name, arguments, call_id))
 
-            # Match Cloudflare's documented traditional tool-calling conversation format.
-            clean_messages.append({"role": "assistant", "content": json.dumps({"name": name, "arguments": arguments}, ensure_ascii=False)})
+        if not normalized_calls:
+            final_message = assistant_message
+            break
+
+        clean_messages.append({
+            "role": "assistant",
+            "content": _content_text(assistant_message.get("content")) or None,
+            "tool_calls": normalized_calls,
+        })
+
+        for name, arguments, call_id in calls_to_execute:
             try:
                 tool_result, found_sources, found_images, note = _run_tool(name, arguments)
-                # Assign stable citation numbers and pass them back to Gemma so its
-                # [1], [2], ... references match the source cards shown in the UI.
+
+                # Number sources once, then pass the same citation markers to Gemma and the UI.
                 for source in found_sources:
                     source_url = source.get("url")
                     if not source_url:
                         continue
                     if source_url not in sources_by_url:
-                        sources_by_url[source_url] = {
-                            **source,
-                            "id": len(sources_by_url) + 1,
-                        }
+                        sources_by_url[source_url] = {**source, "id": len(sources_by_url) + 1}
                     source["id"] = sources_by_url[source_url]["id"]
                     source["citation"] = f"[{source['id']}]"
 
@@ -738,8 +827,9 @@ def gemma_chat(frontend_messages: list[dict]) -> dict:
                                 item["citation"] = f"[{sources_by_url[source_url]['id']}]"
 
                 for image in found_images:
-                    if image.get("image_url"):
-                        images_by_url[image["image_url"]] = image
+                    image_url = image.get("image_url")
+                    if image_url and urlsplit(image_url).scheme in ("http", "https"):
+                        images_by_url[image_url] = image
                 if note:
                     activity.append(note)
             except Exception as exc:
@@ -748,26 +838,22 @@ def gemma_chat(frontend_messages: list[dict]) -> dict:
 
             clean_messages.append({
                 "role": "tool",
+                "tool_call_id": call_id,
                 "content": json.dumps(tool_result, ensure_ascii=False)[:18000],
             })
 
-    answer = _extract_answer(final_result)
+    answer = _extract_answer({"choices": [{"message": final_message}]})
     if not answer:
         raise RuntimeError(
-            "Gemma 4 returned no visible text. Response fields: "
-            + ", ".join(str(key) for key in final_result.keys())
+            "Gemma 4 returned an empty assistant message. It may have ended on a tool call; "
+            "try your request again or shorten the conversation."
         )
 
-    # Give citations stable numbers in the same order supplied to the final model context.
-    final_sources = list(sources_by_url.values())[:12]
     return {
         "text": answer,
-        "thinking": (
-            "Gemma 4 reasoning mode was enabled for this response. "
-            "The API does not provide a separate private, step-by-step reasoning transcript."
-        ),
+        "thinking": "Gemma 4 reasoning mode was enabled. Private chain-of-thought is not displayed.",
         "activity": activity[:12],
-        "sources": final_sources,
+        "sources": list(sources_by_url.values())[:12],
         "images": list(images_by_url.values())[:6],
     }
 
