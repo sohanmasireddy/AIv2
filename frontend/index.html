@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ABC123</title>
 <script>
+  /* Chromium-only: navigator.userAgentData exists in Chromium browsers only. */
   if (!("userAgentData" in navigator)) document.documentElement.classList.add("unsupported");
 </script>
 <link rel="stylesheet" href="./glass/liquid-glass.css">
@@ -50,6 +51,22 @@
   .msg img { display: block; max-width: 220px; max-height: 220px; border-radius: 14px; margin-bottom: 8px; }
   .msg.err { color: #ffd0d0; }
   .thinking-status { color: var(--muted); }
+  .thinking-details { margin-top: 10px; padding-top: 9px; border-top: 1px solid rgba(255,255,255,.15); color: var(--muted); font-size: 13px; text-shadow: none; }
+  .thinking-details summary { cursor: pointer; color: rgba(244,247,255,.88); user-select: none; }
+  .thinking-details .thinking-body { margin-top: 8px; line-height: 1.5; white-space: pre-wrap; }
+  .thinking-details ul { margin: 7px 0 0; padding-left: 18px; }
+  .web-sources { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.14); display: grid; gap: 8px; text-shadow: none; }
+  .web-sources-title { color: rgba(244,247,255,.9); font-size: 13px; font-weight: 650; }
+  .web-source { display: block; padding: 9px 11px; border: 1px solid rgba(255,255,255,.13); border-radius: 13px; color: var(--text); text-decoration: none; background: rgba(8,14,28,.22); }
+  .web-source:hover { background: rgba(255,255,255,.09); }
+  .web-source-title { display: block; font-size: 13px; font-weight: 600; }
+  .web-source-url { display: block; margin-top: 3px; color: rgba(174,202,255,.86); font-size: 11px; overflow-wrap: anywhere; }
+  .web-source-snippet { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+  .web-image-grid { margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 9px; max-width: 620px; }
+  .web-image-card { display: block; min-width: 0; overflow: hidden; border-radius: 13px; border: 1px solid rgba(255,255,255,.16); background: rgba(8,14,28,.32); color: var(--text); text-decoration: none; }
+  .web-image-card img { width: 100%; height: 126px; max-width: none; max-height: none; object-fit: cover; margin: 0; display: block; }
+  .web-image-caption { display: block; padding: 7px 8px; font-size: 11px; line-height: 1.35; color: var(--muted); }
+  .web-image-credit { display: block; margin-top: 3px; opacity: .76; }
 
   #composer {
     position: fixed; z-index: 10;
@@ -343,7 +360,7 @@ function addMsg(role, text, imageDataUrl) {
   return span;
 }
 
-/* Reveal completed responses progressively. */
+/* Cloudflare returns the completed response; reveal it progressively in the UI. */
 function reveal(element, text) {
   return new Promise((resolve) => {
     if (!text) {
@@ -364,6 +381,93 @@ function reveal(element, text) {
       }
     }, 20);
   });
+}
+
+function addThinking(element, thinking, activity = []) {
+  const details = document.createElement("details");
+  details.className = "thinking-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "Thinking & research activity";
+  const body = document.createElement("div");
+  body.className = "thinking-body";
+  body.textContent = thinking || "Gemma 4 reasoning mode was enabled. The service does not return a separate private, step-by-step reasoning transcript.";
+  details.appendChild(summary);
+  details.appendChild(body);
+  if (Array.isArray(activity) && activity.length) {
+    const list = document.createElement("ul");
+    for (const item of activity) {
+      const li = document.createElement("li");
+      li.textContent = String(item);
+      list.appendChild(li);
+    }
+    details.appendChild(list);
+  }
+  element.parentElement.appendChild(details);
+}
+
+function addWebSources(element, sources) {
+  if (!Array.isArray(sources) || !sources.length) return;
+  const wrap = document.createElement("div");
+  wrap.className = "web-sources";
+  const heading = document.createElement("div");
+  heading.className = "web-sources-title";
+  heading.textContent = "Sources";
+  wrap.appendChild(heading);
+  for (const source of sources.slice(0, 12)) {
+    if (!source || !source.url) continue;
+    const link = document.createElement("a");
+    link.className = "web-source";
+    link.href = source.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    const title = document.createElement("span");
+    title.className = "web-source-title";
+    title.textContent = `${source.id ? `[${source.id}] ` : ""}${source.title || source.url}`;
+    link.appendChild(title);
+    const url = document.createElement("span");
+    url.className = "web-source-url";
+    url.textContent = source.url;
+    link.appendChild(url);
+    if (source.snippet) {
+      const snippet = document.createElement("span");
+      snippet.className = "web-source-snippet";
+      snippet.textContent = source.snippet;
+      link.appendChild(snippet);
+    }
+    wrap.appendChild(link);
+  }
+  if (wrap.children.length > 1) element.parentElement.appendChild(wrap);
+}
+
+function addWebImages(element, images) {
+  if (!Array.isArray(images) || !images.length) return;
+  const grid = document.createElement("div");
+  grid.className = "web-image-grid";
+  for (const item of images.slice(0, 6)) {
+    if (!item || !item.image_url || !item.page_url) continue;
+    const link = document.createElement("a");
+    link.className = "web-image-card";
+    link.href = item.page_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    const image = document.createElement("img");
+    image.src = item.image_url;
+    image.alt = item.title || "Web image result";
+    image.loading = "lazy";
+    image.referrerPolicy = "no-referrer";
+    image.onerror = () => link.remove();
+    link.appendChild(image);
+    const caption = document.createElement("span");
+    caption.className = "web-image-caption";
+    caption.textContent = item.title || "Image";
+    const credit = document.createElement("span");
+    credit.className = "web-image-credit";
+    credit.textContent = [item.artist, item.license].filter(Boolean).join(" · ") || "Wikimedia Commons";
+    caption.appendChild(credit);
+    link.appendChild(caption);
+    grid.appendChild(link);
+  }
+  if (grid.children.length) element.parentElement.appendChild(grid);
 }
 
 async function send() {
@@ -395,6 +499,9 @@ async function send() {
     const answer = result.text || "";
     output.classList.remove("thinking-status");
     await reveal(output, answer);
+    addThinking(output, result.thinking, result.activity || []);
+    addWebSources(output, result.sources || []);
+    addWebImages(output, result.images || []);
     history.push({ role: "assistant", content: answer });
   } catch (error) {
     output.parentElement.classList.add("err");
