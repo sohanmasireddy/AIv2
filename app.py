@@ -67,7 +67,7 @@ def ollama_chat(messages: list) -> str:
     if not key:
         raise RuntimeError("OLLAMA_API_KEY is not set in Streamlit secrets.")
     host = secret("OLLAMA_HOST", "https://ollama.com").rstrip("/")
-    model = secret("OLLAMA_MODEL", "muse-spark-open:cloud")
+    model = secret("OLLAMA_MODEL", "gemma4:cloud")
 
     clean = []
     for m in messages:
