@@ -67,6 +67,26 @@
   .web-image-caption { display: block; padding: 7px 8px; font-size: 11px; line-height: 1.35; color: var(--muted); }
   .web-image-credit { display: block; margin-top: 3px; opacity: .76; }
 
+  /* Safe Markdown formatting for assistant messages. */
+  .msg-body { min-width: 0; overflow-wrap: anywhere; }
+  .msg-body > :first-child { margin-top: 0; }
+  .msg-body > :last-child { margin-bottom: 0; }
+  .msg-body p { margin: 0 0 .72em; }
+  .msg-body strong { font-weight: 700; color: #fff; }
+  .msg-body em { font-style: italic; }
+  .msg-body del { opacity: .78; }
+  .msg-body a { color: #b8d0ff; text-decoration: underline; text-underline-offset: 2px; }
+  .msg-body code { padding: .12em .38em; border-radius: 6px; background: rgba(0,0,0,.26); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .9em; }
+  .msg-body pre { margin: 9px 0; padding: 12px; overflow-x: auto; border-radius: 12px; background: rgba(0,0,0,.32); border: 1px solid rgba(255,255,255,.1); }
+  .msg-body pre code { padding: 0; background: transparent; font-size: 12px; }
+  .msg-body ul, .msg-body ol { margin: 5px 0 12px; padding-left: 23px; }
+  .msg-body li { margin: 3px 0; }
+  .msg-body h1, .msg-body h2, .msg-body h3, .msg-body h4 { margin: 14px 0 7px; line-height: 1.25; color: #fff; }
+  .msg-body h1 { font-size: 1.35em; } .msg-body h2 { font-size: 1.2em; } .msg-body h3 { font-size: 1.08em; }
+  .msg-body blockquote { margin: 8px 0; padding: 3px 0 3px 12px; border-left: 3px solid rgba(190,213,255,.55); color: var(--muted); }
+  .msg-body hr { border: 0; border-top: 1px solid rgba(255,255,255,.2); margin: 12px 0; }
+  .msg-body img.inline-markdown-image { display: block; max-width: min(100%, 560px); max-height: 420px; width: auto; height: auto; object-fit: contain; border-radius: 12px; margin: 9px 0; }
+
   #composer {
     position: fixed; z-index: 10;
     left: 14px; right: 14px; max-width: 792px; margin: 0 auto;
@@ -351,44 +371,219 @@ function addMsg(role, text, imageDataUrl) {
     image.alt = "Uploaded image";
     element.appendChild(image);
   }
-  const span = document.createElement("span");
-  span.textContent = text;
-  element.appendChild(span);
+  const body = document.createElement("div");
+  body.className = "msg-body";
+  body.textContent = text;
+  element.appendChild(body);
   log.appendChild(element);
   io.observe(element);
-  return span;
+  return body;
 }
 
-/* Prevent accidental display of raw image/base64 payloads as assistant prose. */
+/* Clean accidental raw image payloads and Markdown image embeds.
+   Search images are displayed from the structured result.images array below. */
 function sanitizeAssistantText(value) {
   let text = String(value || "");
-  text = text.replace(/!\[[^\]]*\]\(\s*data:image\/[^;]+;base64,[A-Za-z0-9+/=\s]+\)/gi, "[Image result is displayed below.]");
+  text = text.replace(/!\[[^\]]*\]\(\s*https?:\/\/[^)\s]+(?:\s+"[^"]*")?\s*\)\s*(?:\[\d+\])?/gi, "");
+  text = text.replace(/!\[[^\]]*\]\(\s*data:image\/[^;]+;base64,[A-Za-z0-9+/=\s]+\)/gi, "");
   text = text.replace(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+/gi, "[image data omitted]");
   text = text.replace(/(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{512,}={0,2}(?![A-Za-z0-9+/])/g, "[binary image data omitted]");
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "");
+  text = text.replace(/^[ \t]*\[\d+\][ \t]*$/gm, "");
+  text = text.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n");
+  return text.trim();
 }
 
-/* Cloudflare returns the completed response; reveal it progressively in the UI. */
-function reveal(element, text) {
-  return new Promise((resolve) => {
-    if (!text) {
-      element.textContent = "(empty reply)";
-      resolve();
-      return;
+function appendInlineMarkdown(parent, source) {
+  const token = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)(?:\s+"([^"]*)")?\)|\[([^\]]+)\]\((https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|(?<!\*)\*([^*\n]+)\*(?!\*)|(?<!_)_([^_\n]+)_(?!_)|`([^`\n]+)`|(https?:\/\/[^\s<]+)/g;
+  let last = 0;
+  let match;
+
+  while ((match = token.exec(source)) !== null) {
+    if (match.index > last) {
+      parent.appendChild(document.createTextNode(source.slice(last, match.index)));
     }
-    let index = 0;
-    const step = Math.max(3, Math.ceil(text.length / 80));
-    const timer = setInterval(() => {
-      const stickToBottom = nearBottom();
-      index = Math.min(text.length, index + step);
-      element.textContent = text.slice(0, index);
-      if (stickToBottom) toBottom();
-      if (index >= text.length) {
-        clearInterval(timer);
-        resolve();
+
+    if (match[1] !== undefined) {
+      // Markdown image fallback. The backend normally moves search images
+      // into structured image cards, but this safely handles an inline image.
+      try {
+        const url = new URL(match[2]);
+        if (url.protocol === "http:" || url.protocol === "https:") {
+          const image = document.createElement("img");
+          image.className = "inline-markdown-image";
+          image.src = url.href;
+          image.alt = match[1] || "Image";
+          image.loading = "lazy";
+          image.referrerPolicy = "no-referrer";
+          parent.appendChild(image);
+        } else {
+          parent.appendChild(document.createTextNode(match[0]));
+        }
+      } catch {
+        parent.appendChild(document.createTextNode(match[0]));
       }
-    }, 20);
-  });
+    } else if (match[4] !== undefined) {
+      try {
+        const url = new URL(match[5]);
+        if (url.protocol === "http:" || url.protocol === "https:") {
+          const link = document.createElement("a");
+          link.href = url.href;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          appendInlineMarkdown(link, match[4]);
+          parent.appendChild(link);
+        } else {
+          parent.appendChild(document.createTextNode(match[0]));
+        }
+      } catch {
+        parent.appendChild(document.createTextNode(match[0]));
+      }
+    } else if (match[6] !== undefined || match[7] !== undefined) {
+      const strong = document.createElement("strong");
+      appendInlineMarkdown(strong, match[6] ?? match[7]);
+      parent.appendChild(strong);
+    } else if (match[8] !== undefined) {
+      const del = document.createElement("del");
+      appendInlineMarkdown(del, match[8]);
+      parent.appendChild(del);
+    } else if (match[9] !== undefined || match[10] !== undefined) {
+      const em = document.createElement("em");
+      appendInlineMarkdown(em, match[9] ?? match[10]);
+      parent.appendChild(em);
+    } else if (match[11] !== undefined) {
+      const code = document.createElement("code");
+      code.textContent = match[11];
+      parent.appendChild(code);
+    } else if (match[12] !== undefined) {
+      const url = match[12].replace(/[.,!?;:]+$/, "");
+      const trailing = match[12].slice(url.length);
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          const link = document.createElement("a");
+          link.href = parsed.href;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = url;
+          parent.appendChild(link);
+          if (trailing) parent.appendChild(document.createTextNode(trailing));
+        } else {
+          parent.appendChild(document.createTextNode(match[0]));
+        }
+      } catch {
+        parent.appendChild(document.createTextNode(match[0]));
+      }
+    }
+
+    last = token.lastIndex;
+  }
+
+  if (last < source.length) {
+    parent.appendChild(document.createTextNode(source.slice(last)));
+  }
+}
+
+function renderAssistantMarkdown(element, markdown) {
+  element.replaceChildren();
+  const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+  let index = 0;
+
+  const isBlockStart = (line) =>
+    /^\s*```/.test(line) ||
+    /^\s{0,3}#{1,6}\s+/.test(line) ||
+    /^\s{0,3}>/.test(line) ||
+    /^\s*([-*+]\s+|\d+[.)]\s+)/.test(line) ||
+    /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line);
+
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) { index++; continue; }
+
+    // Fenced code block.
+    if (/^\s*```/.test(line)) {
+      const language = line.replace(/^\s*```/, "").trim();
+      index++;
+      const codeLines = [];
+      while (index < lines.length && !/^\s*```/.test(lines[index])) {
+        codeLines.push(lines[index++]);
+      }
+      if (index < lines.length) index++;
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      if (language) code.dataset.language = language;
+      code.textContent = codeLines.join("\n");
+      pre.appendChild(code);
+      element.appendChild(pre);
+      continue;
+    }
+
+    // Headings.
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      const node = document.createElement(`h${heading[1].length}`);
+      appendInlineMarkdown(node, heading[2]);
+      element.appendChild(node);
+      index++;
+      continue;
+    }
+
+    // Horizontal rule.
+    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      element.appendChild(document.createElement("hr"));
+      index++;
+      continue;
+    }
+
+    // Blockquote.
+    if (/^\s{0,3}>/.test(line)) {
+      const quoteLines = [];
+      while (index < lines.length && /^\s{0,3}>/.test(lines[index])) {
+        quoteLines.push(lines[index++].replace(/^\s{0,3}>\s?/, ""));
+      }
+      const quote = document.createElement("blockquote");
+      appendInlineMarkdown(quote, quoteLines.join(" "));
+      element.appendChild(quote);
+      continue;
+    }
+
+    // Ordered and unordered lists.
+    const listMatch = line.match(/^\s*(?:([-*+])\s+|(\d+)[.)]\s+)(.*)$/);
+    if (listMatch) {
+      const ordered = Boolean(listMatch[2]);
+      const list = document.createElement(ordered ? "ol" : "ul");
+      while (index < lines.length) {
+        const item = lines[index].match(/^\s*(?:([-*+])\s+|(\d+)[.)]\s+)(.*)$/);
+        if (!item || Boolean(item[2]) !== ordered) break;
+        const li = document.createElement("li");
+        appendInlineMarkdown(li, item[3]);
+        list.appendChild(li);
+        index++;
+      }
+      element.appendChild(list);
+      continue;
+    }
+
+    // Ordinary paragraph. Preserve deliberate single line breaks.
+    const paragraphLines = [];
+    while (index < lines.length && lines[index].trim() && !isBlockStart(lines[index])) {
+      paragraphLines.push(lines[index++]);
+    }
+    if (!paragraphLines.length) {
+      paragraphLines.push(lines[index++]);
+    }
+    const paragraph = document.createElement("p");
+    paragraphLines.forEach((part, partIndex) => {
+      if (partIndex) paragraph.appendChild(document.createElement("br"));
+      appendInlineMarkdown(paragraph, part);
+    });
+    element.appendChild(paragraph);
+  }
+}
+
+function reveal(element, text) {
+  renderAssistantMarkdown(element, text);
+  return Promise.resolve();
 }
 
 function addThinking(element, thinking, activity = []) {
