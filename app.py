@@ -1,4 +1,3 @@
-
 import ipaddress
 import json
 import os
@@ -97,13 +96,12 @@ MODEL_LABELS = {
     "gemma-4": "Gemma 4 26B A4B",
 }
 DEFAULT_MODEL_KEY = "granite"
-WHISPER_MODEL = "@cf/openai/whisper"
+WHISPER_MODEL = "@cf/openai/whisper"  # Used only for microphone transcription; never shown in the model selector.
 CLOUDFLARE_API = "https://api.cloudflare.com/client/v4"
 USER_AGENT = "AIv2/1.0 (web research assistant)"
-
 SYSTEM_PROMPT = """You are ABC123, a helpful, clear, and accurate AI assistant.
 
-You can use tools to search the public web, read web pages, and find images.
+You can use tools to search the public web, read web pages, and find images. These tools are available with every chat model in this app: Granite 4.0 H Micro, GPT-OSS 20B, and Gemma 4.
 Use web_search for current, recent, niche, or explicitly requested online information.
 Use web_fetch to read relevant pages from search results before answering when more detail is needed.
 Use image_search when the user asks to see images, or when relevant images would materially help.
@@ -182,6 +180,7 @@ def _cloudflare_run(
     messages: list[dict],
     model_id: str,
     think_enabled: bool = False,
+    reasoning_effort: str = "medium",
     tools: list[dict] | None = None,
 ) -> dict:
     """Call Cloudflare Chat Completions with model-specific reasoning controls."""
@@ -199,12 +198,17 @@ def _cloudflare_run(
     }
 
     if model_id == MODEL_IDS["gemma-4"]:
+        # Gemma 4 has a native thinking switch in its chat template.
         body["chat_template_kwargs"] = {
             "enable_thinking": bool(think_enabled),
             "clear_thinking": False,
         }
     elif model_id == MODEL_IDS["gpt-oss-20b"]:
-        body["reasoning_effort"] = "high" if think_enabled else "medium"
+        # Cloudflare documents low, medium (default), and high for GPT-OSS 20B.
+        effort = str(reasoning_effort or "medium").lower()
+        if effort not in {"low", "medium", "high"}:
+            effort = "medium"
+        body["reasoning_effort"] = effort
     elif model_id == MODEL_IDS["granite"] and think_enabled:
         raise ValueError(
             "Granite 4.0 H Micro does not expose a documented reasoning-effort switch. "
@@ -258,7 +262,12 @@ def _extract_cloudflare_result(payload: Any) -> dict:
 
 
 def transcribe_with_whisper(audio_base64: str, audio_mime: str = "audio/webm") -> str:
-    """Transcribe microphone audio with Cloudflare Whisper using a raw binary body."""
+    """Transcribe a microphone recording with Cloudflare Whisper.
+
+    Cloudflare accepts either a raw binary audio body or an object whose
+    `audio` property is an array of unsigned byte values. Use the raw binary
+    variant so the recording is not expanded into a large JSON integer array.
+    """
     import base64
     import binascii
 
@@ -276,6 +285,8 @@ def transcribe_with_whisper(audio_base64: str, audio_mime: str = "audio/webm") -
     if len(audio_bytes) < 256:
         raise ValueError("The recording was too short or empty.")
 
+    # MediaRecorder MIME values can include codec parameters, which are valid
+    # in Content-Type. Fall back to application/octet-stream if absent.
     content_type = str(audio_mime or "").strip() or "application/octet-stream"
     if not content_type.lower().startswith("audio/"):
         content_type = "application/octet-stream"
@@ -608,6 +619,7 @@ def image_search(query: str, max_results: int = 5) -> dict:
         ext = info.get("extmetadata") or {}
         license_name = (ext.get("LicenseShortName") or {}).get("value", "")
         artist = (ext.get("Artist") or {}).get("value", "")
+        # Strip tags from Wikimedia attribution metadata before sending it to the UI/model.
         artist = re.sub(r"<[^>]+>", " ", artist)
         artist = re.sub(r"\s+", " ", unescape(artist)).strip()
         images.append({
@@ -693,6 +705,7 @@ def _completion_message(result: dict) -> tuple[dict, dict]:
         choice = choices[0] if isinstance(choices[0], dict) else {}
         message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
         return message, choice
+    # Compatibility with Workers AI's native /ai/run response object.
     message = {
         "role": "assistant",
         "content": result.get("response") or result.get("text") or "",
@@ -727,6 +740,8 @@ def _remove_inline_image_payloads(text: str) -> str:
         "[image data omitted]",
         text,
     )
+    # Catch bare long base64 blobs accidentally emitted by a model. Restrict to
+    # strings of 512+ base64 characters so normal words and short identifiers survive.
     text = re.sub(
         r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{512,}={0,2}(?![A-Za-z0-9+/])",
         "[binary image data omitted]",
@@ -780,23 +795,15 @@ def _run_tool(name: str, arguments: dict) -> tuple[dict, list[dict], list[dict],
         result = image_search(arguments.get("query", ""), arguments.get("max_results", 5))
         images.extend(result.get("images", []))
         activity = f"Found {len(images)} image result(s) for: {result['query']}"
+        # Keep the tool response concise; the app separately displays the image URLs.
         model_result = {
             "query": result["query"],
             "images": [
-                {
-                    "title": img["title"],
-                    "page_url": img["page_url"],
-                    "license": img.get("license", ""),
-                    "artist": img.get("artist", ""),
-                }
+                {"title": img["title"], "page_url": img["page_url"], "license": img.get("license", ""), "artist": img.get("artist", "")}
                 for img in result.get("images", [])
             ],
         }
-        sources.extend({
-            "title": img["title"],
-            "url": img["page_url"],
-            "snippet": f"Wikimedia Commons image. License: {img.get('license') or 'See source page'}.",
-        } for img in result.get("images", []))
+        sources.extend({"title": img["title"], "url": img["page_url"], "snippet": f"Wikimedia Commons image. License: {img.get('license') or 'See source page'}."} for img in result.get("images", []))
         return model_result, sources, images, activity
 
     raise ValueError(f"Unknown tool: {name}")
@@ -833,17 +840,57 @@ def describe_image_with_gemma(image_base64: str, question: str) -> str:
     return answer
 
 
+def _explicit_web_search_query(messages: list[dict]) -> str | None:
+    """Return a search query for clear, explicit web-search requests.
+
+    This lightweight fallback makes DuckDuckGo search available even when a
+    selected model chooses not to emit a function call. All three chat models
+    also receive the same web_search/web_fetch/image_search function tools.
+    """
+    latest_user = next(
+        (item for item in reversed(messages)
+         if isinstance(item, dict) and item.get("role") == "user"),
+        None,
+    )
+    if not latest_user:
+        return None
+    text = str(latest_user.get("content", "") or "").strip()
+    if not text:
+        return None
+    patterns = (
+        r"\bsearch(?: the)? (?:web|internet|online)(?: for)?\b",
+        r"\bweb search(?: for)?\b",
+        r"\blook up(?: online| on the web)?\b",
+        r"\bfind (?:information|sources|articles|websites) (?:about|for)\b",
+        r"\bsearch for\b",
+    )
+    if not any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns):
+        return None
+    query = text
+    for pattern in patterns:
+        query = re.sub(pattern, " ", query, count=1, flags=re.IGNORECASE)
+    query = re.sub(r"\s+", " ", query).strip(" :,-.?!")
+    return (query or text)[:400]
+
+
 def chat_with_model(
     frontend_messages: list[dict],
     model_key: str = DEFAULT_MODEL_KEY,
     think_enabled: bool = False,
+    reasoning_effort: str = "medium",
 ) -> dict:
     """Run the selected Cloudflare model with web/image tools and optional reasoning."""
     if model_key not in MODEL_IDS:
         model_key = DEFAULT_MODEL_KEY
     model_id = MODEL_IDS[model_key]
     model_label = MODEL_LABELS[model_key]
-    think_enabled = bool(think_enabled and model_key in ("gpt-oss-20b", "gemma-4"))
+    # Gemma uses a native on/off thinking switch. GPT-OSS uses an explicit level.
+    think_enabled = bool(think_enabled and model_key == "gemma-4")
+    reasoning_effort = str(reasoning_effort or "medium").lower()
+    if reasoning_effort not in {"low", "medium", "high"}:
+        reasoning_effort = "medium"
+    if model_key != "gpt-oss-20b":
+        reasoning_effort = "medium"
 
     clean_messages: list[dict] = []
     activity: list[str] = []
@@ -867,6 +914,8 @@ def chat_with_model(
                     })
                 clean_messages.append({"role": role, "content": parts})
             else:
+                # Granite and GPT-OSS are text-only in this Workers AI catalog.
+                # Keep uploads working by describing them with Gemma 4 first.
                 descriptions = []
                 for image_number, image in enumerate(valid_images, start=1):
                     description = describe_image_with_gemma(
@@ -898,11 +947,45 @@ def chat_with_model(
     final_message: dict = {}
     max_tool_rounds = 4
 
+    # Explicit search requests get a DuckDuckGo pre-search for every model.
+    # Function calling remains enabled on every model for follow-up searches,
+    # page reading, and image searches.
+    search_query = _explicit_web_search_query(frontend_messages)
+    if search_query:
+        try:
+            prefetched = web_search(search_query, max_results=6)
+            numbered_results = []
+            for item in prefetched.get("results", []):
+                url = item.get("url")
+                if not url:
+                    continue
+                if url not in sources_by_url:
+                    sources_by_url[url] = {**item, "id": len(sources_by_url) + 1}
+                source_id = sources_by_url[url]["id"]
+                numbered_results.append(
+                    f"[{source_id}] {item.get('title', url)}\n"
+                    f"URL: {url}\n"
+                    f"Snippet: {item.get('snippet', '')}"
+                )
+            if numbered_results:
+                research_context = (
+                    "DuckDuckGo live web-search results are provided below. Use them to answer. "
+                    "Cite source numbers exactly as [1], [2], etc. Do not repeat the same search "
+                    "unless you need a narrower or different query; use web_fetch to read a result.\n\n"
+                    + "\n\n".join(numbered_results)
+                )
+                clean_messages.insert(1, {"role": "system", "content": research_context})
+                activity.append(f"DuckDuckGo searched the web for: {search_query}")
+        except Exception as exc:
+            activity.append(f"DuckDuckGo pre-search could not run: {exc}")
+
     for tool_round in range(max_tool_rounds + 1):
         result = _cloudflare_run(
             clean_messages,
             model_id=model_id,
             think_enabled=think_enabled,
+            reasoning_effort=reasoning_effort,
+            # Granite, GPT-OSS, and Gemma 4 all advertise function-calling support.
             tools=TOOLS if tool_round < max_tool_rounds else None,
         )
         assistant_message, choice = _completion_message(result)
@@ -917,7 +1000,8 @@ def chat_with_model(
                     "content": "Please provide your final answer in normal text. Do not call tools.",
                 })
                 fallback = _cloudflare_run(
-                    clean_messages, model_id=model_id, think_enabled=think_enabled, tools=None
+                    clean_messages, model_id=model_id, think_enabled=think_enabled,
+                    reasoning_effort=reasoning_effort, tools=None
                 )
                 final_message, _ = _completion_message(fallback)
                 answer = _extract_answer(fallback)
@@ -929,7 +1013,8 @@ def chat_with_model(
                 "content": "Finish your answer now using the research already collected. Do not call more tools.",
             })
             fallback = _cloudflare_run(
-                clean_messages, model_id=model_id, think_enabled=think_enabled, tools=None
+                clean_messages, model_id=model_id, think_enabled=think_enabled,
+                reasoning_effort=reasoning_effort, tools=None
             )
             final_message, _ = _completion_message(fallback)
             break
@@ -1026,8 +1111,11 @@ def chat_with_model(
 
     if think_enabled and model_key == "gemma-4":
         thinking_status = "Gemma 4 built-in thinking was enabled for this response. Private chain-of-thought is not displayed."
-    elif think_enabled and model_key == "gpt-oss-20b":
-        thinking_status = "GPT-OSS 20B high reasoning effort was enabled for this response. Private chain-of-thought is not displayed."
+    elif model_key == "gpt-oss-20b":
+        thinking_status = (
+            f"GPT-OSS 20B reasoning effort: {reasoning_effort}. "
+            "Private chain-of-thought is not displayed."
+        )
     elif model_key == "granite":
         thinking_status = "Granite 4.0 H Micro does not expose a separate reasoning-effort control."
     else:
@@ -1073,6 +1161,7 @@ if (
                 value.get("messages") or [],
                 model_key=value.get("model", DEFAULT_MODEL_KEY),
                 think_enabled=bool(value.get("think", False)),
+                reasoning_effort=value.get("reasoning_effort", "medium"),
             )
             st.session_state.reply = {"id": value["id"], **result}
     except Exception as exc:
