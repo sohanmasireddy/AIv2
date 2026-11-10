@@ -101,10 +101,7 @@ CLOUDFLARE_API = "https://api.cloudflare.com/client/v4"
 USER_AGENT = "AIv2/1.0 (web research assistant)"
 SYSTEM_PROMPT = """You are ABC123, a helpful, clear, and accurate AI assistant.
 
-You can use tools to search the public web, read web pages, and find images. These tools are available with every chat model in this app: Granite 4.0 H Micro, GPT-OSS 20B, and Gemma 4.
-Use web_search for current, recent, niche, or explicitly requested online information.
-Use web_fetch to read relevant pages from search results before answering when more detail is needed.
-Use image_search when the user asks to see images, or when relevant images would materially help.
+This app can retrieve public-web search results, read web pages, and find images. Use any supplied live search results when answering current, recent, niche, or explicitly online-research questions. When the model's tool integration is available, use web_search, web_fetch, and image_search as appropriate.
 When image_search returns image results, the app displays them as image cards automatically. Introduce them with a natural sentence such as "Here are the images I found:". NEVER write Markdown image syntax such as ![title](URL), and NEVER paste image URLs into the answer text.
 Do not claim to have browsed unless a web tool actually ran. Do not invent sources, quotations, or URLs.
 When using web results, cite them in your answer using [1], [2], etc. matching the source numbers provided by the tools.
@@ -189,6 +186,31 @@ def _cloudflare_run(
 
     account_id, api_token = cloudflare_credentials()
     endpoint = f"{CLOUDFLARE_API}/accounts/{account_id}/ai/v1/chat/completions"
+    # Granite and GPT-OSS are routed through app-managed web search below.
+    # Keep their Chat Completions payload strictly text-only: no array content,
+    # null assistant content, function-call metadata, or role="tool" messages.
+    if model_id in {MODEL_IDS["granite"], MODEL_IDS["gpt-oss-20b"]}:
+        normalized_messages = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            if role not in {"system", "user", "assistant"}:
+                continue
+            content = message.get("content")
+            if isinstance(content, list):
+                content = "\n".join(
+                    str(part.get("text", ""))
+                    for part in content
+                    if isinstance(part, dict) and isinstance(part.get("text"), str)
+                )
+            elif content is None:
+                content = ""
+            elif not isinstance(content, str):
+                content = str(content)
+            normalized_messages.append({"role": role, "content": content})
+        messages = normalized_messages
+
     body: dict[str, Any] = {
         "model": model_id,
         "messages": messages,
@@ -215,7 +237,7 @@ def _cloudflare_run(
             "Choose GPT-OSS 20B or Gemma 4 to use the Think button."
         )
 
-    if tools:
+    if tools and model_id == MODEL_IDS["gemma-4"]:
         body["tools"] = tools
         body["tool_choice"] = "auto"
         body["parallel_tool_calls"] = False
@@ -840,37 +862,93 @@ def describe_image_with_gemma(image_base64: str, question: str) -> str:
     return answer
 
 
-def _explicit_web_search_query(messages: list[dict]) -> str | None:
-    """Return a search query for clear, explicit web-search requests.
-
-    This lightweight fallback makes DuckDuckGo search available even when a
-    selected model chooses not to emit a function call. All three chat models
-    also receive the same web_search/web_fetch/image_search function tools.
-    """
+def _latest_user_message_text(messages: list[dict]) -> str:
     latest_user = next(
         (item for item in reversed(messages)
          if isinstance(item, dict) and item.get("role") == "user"),
         None,
     )
     if not latest_user:
+        return ""
+    value = latest_user.get("content", "")
+    if isinstance(value, list):
+        value = " ".join(
+            str(part.get("text", ""))
+            for part in value
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    return str(value or "").strip()
+
+
+def _explicit_web_search_query(messages: list[dict]) -> str | None:
+    """Extract explicit web-search commands regardless of the selected model."""
+    text = _latest_user_message_text(messages)
+    if not text:
         return None
-    text = str(latest_user.get("content", "") or "").strip()
+
+    patterns = (
+        r"\b(?:please\s+)?search\s+(?:the\s+)?(?:web|internet|online)(?:\s+for)?\b",
+        r"\bweb\s+search(?:\s+for)?\b",
+        r"\blook\s+up(?:\s+(?:online|on\s+the\s+web))?(?:\s+for)?\b",
+        r"\bfind\s+(?:(?:me|some)\s+)?(?:information|sources|articles|websites|comparisons?|reviews?|examples?|results?)\s+(?:about|for|on|of|between)\b",
+        r"\bduckduckgo\s+(?:search\s+)?(?:for\s+)?\b",
+        r"\bsearch\s+for\b(?!\s+(?:images|pictures|photos)\b)",
+    )
+    matched = False
+    query = text
+    for pattern in patterns:
+        if re.search(pattern, query, re.IGNORECASE):
+            matched = True
+            query = re.sub(pattern, " ", query, count=1, flags=re.IGNORECASE)
+            break
+    if not matched:
+        return None
+    query = re.sub(r"\s+", " ", query).strip(" :,-.?!\"'")
+    return (query or text)[:400]
+
+
+def _explicit_image_search_query(messages: list[dict]) -> str | None:
+    """Extract a request to display images for text-only chat models."""
+    text = _latest_user_message_text(messages)
     if not text:
         return None
     patterns = (
-        r"\bsearch(?: the)? (?:web|internet|online)(?: for)?\b",
-        r"\bweb search(?: for)?\b",
-        r"\blook up(?: online| on the web)?\b",
-        r"\bfind (?:information|sources|articles|websites) (?:about|for)\b",
-        r"\bsearch for\b",
+        r"\b(?:show|find|display|get)\s+(?:me\s+)?(?:some\s+)?(?:images|pictures|photos)\s+of\b",
+        r"\bimage\s+search(?:\s+for)?\b",
+        r"\bsearch\s+images?\s+for\b",
+        r"\bsearch\s+for\s+(?:some\s+)?(?:images|pictures|photos)\s+of\b",
     )
-    if not any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns):
-        return None
     query = text
+    matched = False
     for pattern in patterns:
-        query = re.sub(pattern, " ", query, count=1, flags=re.IGNORECASE)
-    query = re.sub(r"\s+", " ", query).strip(" :,-.?!")
-    return (query or text)[:400]
+        if re.search(pattern, query, re.IGNORECASE):
+            query = re.sub(pattern, " ", query, count=1, flags=re.IGNORECASE)
+            matched = True
+            break
+    if not matched:
+        return None
+    query = re.sub(r"^(?:can you|could you|please|i want to|i would like to)\s+", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"\s+", " ", query).strip(" :,-.?!\"'")
+    return (query or text)[:300]
+
+
+def _web_search_query(messages: list[dict]) -> tuple[str | None, bool]:
+    """Return (query, explicitly_requested), including obvious freshness needs."""
+    explicit_query = _explicit_web_search_query(messages)
+    if explicit_query:
+        return explicit_query, True
+
+    text = _latest_user_message_text(messages)
+    if not text:
+        return None, False
+    freshness_terms = (
+        r"\b(latest|newest|most recent|recently|current|currently|today|tonight|right now|"
+        r"this week|this month|this year|breaking|up[- ]to[- ]date|2026|2027|news|"
+        r"price|pricing|release date|latest version|current version|updated documentation)\b"
+    )
+    if re.search(freshness_terms, text, re.IGNORECASE):
+        return text[:400], False
+    return None, False
 
 
 def chat_with_model(
@@ -947,10 +1025,12 @@ def chat_with_model(
     final_message: dict = {}
     max_tool_rounds = 4
 
-    # Explicit search requests get a DuckDuckGo pre-search for every model.
-    # Function calling remains enabled on every model for follow-up searches,
-    # page reading, and image searches.
-    search_query = _explicit_web_search_query(frontend_messages)
+    # Granite and GPT-OSS use deterministic app-side search instead of function
+    # calling. This avoids sending tool-call round-trip messages to model schemas
+    # that reject array/null/tool-role message content. Gemma keeps its existing
+    # native tool integration.
+    uses_native_tools = model_key == "gemma-4"
+    search_query, search_was_explicit = _web_search_query(frontend_messages)
     if search_query:
         try:
             prefetched = web_search(search_query, max_results=6)
@@ -969,24 +1049,85 @@ def chat_with_model(
                 )
             if numbered_results:
                 research_context = (
-                    "DuckDuckGo live web-search results are provided below. Use them to answer. "
-                    "Cite source numbers exactly as [1], [2], etc. Do not repeat the same search "
-                    "unless you need a narrower or different query; use web_fetch to read a result.\n\n"
+                    "DuckDuckGo live web-search results are provided below. Use them as the "
+                    "source of current information. Cite source numbers exactly as [1], [2], etc. "
+                    "Do not claim facts that are not supported by these results.\n\n"
                     + "\n\n".join(numbered_results)
                 )
                 clean_messages.insert(1, {"role": "system", "content": research_context})
                 activity.append(f"DuckDuckGo searched the web for: {search_query}")
+            elif search_was_explicit:
+                raise RuntimeError("DuckDuckGo returned no readable search results.")
         except Exception as exc:
-            activity.append(f"DuckDuckGo pre-search could not run: {exc}")
+            if search_was_explicit:
+                raise RuntimeError(f"DuckDuckGo web search failed: {exc}") from exc
+            activity.append(f"DuckDuckGo automatic search could not run: {exc}")
 
-    for tool_round in range(max_tool_rounds + 1):
+    # Preserve the in-chat image gallery for Granite and GPT-OSS as well:
+    # these models do not need to emit a function call to trigger image search.
+    if not uses_native_tools:
+        image_query = _explicit_image_search_query(frontend_messages)
+        if image_query:
+            try:
+                image_result = image_search(image_query, max_results=5)
+                image_context = []
+                for image_item in image_result.get("images", []):
+                    image_url = image_item.get("image_url")
+                    page_url = image_item.get("page_url")
+                    if image_url:
+                        images_by_url[image_url] = image_item
+                    if page_url:
+                        if page_url not in sources_by_url:
+                            sources_by_url[page_url] = {
+                                "title": image_item.get("title", "Image"),
+                                "url": page_url,
+                                "snippet": f"Wikimedia Commons image. License: {image_item.get('license') or 'See source page'}.",
+                                "id": len(sources_by_url) + 1,
+                            }
+                        image_context.append(
+                            f"[{sources_by_url[page_url]['id']}] {image_item.get('title', 'Image')}\n"
+                            f"Source page: {page_url}\n"
+                            f"License: {image_item.get('license') or 'See source page'}"
+                        )
+                if image_context:
+                    clean_messages.insert(
+                        1,
+                        {
+                            "role": "system",
+                            "content": (
+                                "The application found these relevant public images. Introduce the "
+                                "image gallery naturally; do not write Markdown image syntax or "
+                                "paste image URLs. Cite source pages using their [number] markers.\n\n"
+                                + "\n\n".join(image_context)
+                            ),
+                        },
+                    )
+                    activity.append(f"Found {len(image_context)} images for: {image_query}")
+            except Exception as exc:
+                activity.append(f"Image search could not run: {exc}")
+
+    if not uses_native_tools:
+        clean_messages.insert(
+            1,
+            {
+                "role": "system",
+                "content": (
+                    "For this model, web search is handled by the application, not function calls. "
+                    "Use any DuckDuckGo results included in the conversation and cite them with "
+                    "their exact [number] markers. Do not emit tool calls or claim to have searched "
+                    "when no search results were supplied."
+                ),
+            },
+        )
+
+    tool_round_limit = max_tool_rounds if uses_native_tools else 0
+    for tool_round in range(tool_round_limit + 1):
         result = _cloudflare_run(
             clean_messages,
             model_id=model_id,
             think_enabled=think_enabled,
             reasoning_effort=reasoning_effort,
-            # Granite, GPT-OSS, and Gemma 4 all advertise function-calling support.
-            tools=TOOLS if tool_round < max_tool_rounds else None,
+            tools=TOOLS if uses_native_tools and tool_round < max_tool_rounds else None,
         )
         assistant_message, choice = _completion_message(result)
         tool_calls = _extract_tool_calls(result)
