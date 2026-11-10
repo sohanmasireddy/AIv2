@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -83,9 +82,7 @@
   .msg-body ul, .msg-body ol { margin: 5px 0 12px; padding-left: 23px; }
   .msg-body li { margin: 3px 0; }
   .msg-body h1, .msg-body h2, .msg-body h3, .msg-body h4 { margin: 14px 0 7px; line-height: 1.25; color: #fff; }
-  .msg-body h1 { font-size: 1.35em; }
-  .msg-body h2 { font-size: 1.2em; }
-  .msg-body h3 { font-size: 1.08em; }
+  .msg-body h1 { font-size: 1.35em; } .msg-body h2 { font-size: 1.2em; } .msg-body h3 { font-size: 1.08em; }
   .msg-body blockquote { margin: 8px 0; padding: 3px 0 3px 12px; border-left: 3px solid rgba(190,213,255,.55); color: var(--muted); }
   .msg-body hr { border: 0; border-top: 1px solid rgba(255,255,255,.2); margin: 12px 0; }
   .msg-body img.inline-markdown-image { display: block; max-width: min(100%, 560px); max-height: 420px; width: auto; height: auto; object-fit: contain; border-radius: 12px; margin: 9px 0; }
@@ -118,40 +115,86 @@
   #preview .icon { width: 28px; height: 28px; }
   #preview .icon svg { width: 16px; height: 16px; }
 
-  /* Plain-text model picker with a small chevron; the brain is the Think toggle. */
+  /* Text-only selectors with glass dropdown menus and animated chevrons. */
   .model-control {
     display: flex; align-items: center; flex: none; height: 40px;
-    border: 0; border-radius: 0; background: transparent; overflow: visible; gap: 2px;
+    gap: 3px; position: relative; z-index: 30;
   }
-  #modelSelect {
-    appearance: none; -webkit-appearance: none;
-    width: 146px; max-width: 146px; height: 40px; padding: 0 22px 0 4px;
-    border: 0; border-radius: 0; outline: 0; color: var(--text); background: transparent;
-    font-family: inherit; font-size: 11px; line-height: 1.2; cursor: pointer;
-    box-shadow: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23f4f7ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat; background-position: right 4px center;
+  .picker-wrap { position: relative; display: flex; align-items: center; }
+  .picker-trigger {
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    min-height: 38px; padding: 0 5px; border: 0; border-radius: 9px;
+    color: var(--text); background: transparent; font: inherit; font-size: 11px;
+    line-height: 1.2; cursor: pointer; white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .16s ease, color .16s ease;
   }
-  #modelSelect:focus-visible { outline: 1px solid rgba(255,255,255,.42); outline-offset: 2px; border-radius: 5px; }
-  #modelSelect option { color: #f4f7ff; background: #111827; }
-  #thinkToggle {
-    width: 34px; height: 40px; border: 0; border-radius: 50%;
-    color: var(--text); background: transparent; cursor: pointer;
-    display: grid; place-items: center; flex: none; padding: 0;
-    transition: background .15s, color .15s, opacity .15s;
+  .picker-trigger:hover, .picker-wrap.menu-open .picker-trigger { background: rgba(255,255,255,.075); }
+  .picker-trigger:focus-visible, .glass-menu-item:focus-visible {
+    outline: 1px solid rgba(214,230,255,.7); outline-offset: 2px;
   }
-  #thinkToggle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  #thinkToggle.active { color: #ffd27a; background: rgba(255,190,70,.14); }
-  #thinkToggle:disabled { opacity: .34; cursor: not-allowed; }
+  .dropdown-chevron {
+    width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    transition: transform .24s cubic-bezier(.2,.8,.2,1);
+  }
+  .picker-wrap.menu-open .dropdown-chevron { transform: rotate(180deg); }
+  .glass-dropdown-menu {
+    position: absolute; right: 0; bottom: calc(100% + 9px); z-index: 100;
+    min-width: 190px; padding: 6px; display: grid; gap: 3px;
+    border: 1px solid rgba(255,255,255,.22); border-radius: 17px;
+    background: linear-gradient(145deg, rgba(35,49,73,.84), rgba(8,15,30,.82));
+    -webkit-backdrop-filter: blur(24px) saturate(165%);
+    backdrop-filter: blur(24px) saturate(165%);
+    box-shadow: 0 18px 48px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.18);
+    transform: translateY(7px) scale(.975); transform-origin: bottom right;
+    opacity: 0; pointer-events: none;
+    transition: opacity .17s ease, transform .2s cubic-bezier(.2,.8,.2,1);
+  }
+  .glass-dropdown-menu.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  .glass-dropdown-menu[hidden] { display: none !important; }
+  .glass-menu-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    width: 100%; min-height: 36px; padding: 8px 10px;
+    border: 0; border-radius: 10px; color: rgba(244,247,255,.94);
+    background: transparent; font: inherit; font-size: 11px; text-align: left;
+    cursor: pointer; transition: background .14s ease, color .14s ease;
+  }
+  .glass-menu-item:hover { background: rgba(255,255,255,.10); }
+  .glass-menu-item.selected { background: rgba(170,205,255,.15); color: #fff; }
+  .menu-check { opacity: 0; color: #c6dcff; font-size: 13px; }
+  .glass-menu-item.selected .menu-check { opacity: 1; }
+  .menu-caption {
+    padding: 5px 10px 7px; color: rgba(222,234,255,.56);
+    font-size: 9px; letter-spacing: .09em; text-transform: uppercase;
+  }
+  #gemmaThinkToggle {
+    display: grid; place-items: center; flex: none; width: 35px; height: 38px;
+    padding: 0; border: 0; border-radius: 50%; color: var(--text);
+    background: transparent; cursor: pointer;
+    transition: color .16s ease, background .16s ease, transform .16s ease;
+  }
+  #gemmaThinkToggle[hidden], #reasoningPicker[hidden] { display: none !important; }
+  #gemmaThinkToggle:hover { background: rgba(255,255,255,.08); }
+  #gemmaThinkToggle:active { transform: scale(.9); }
+  #gemmaThinkToggle svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #gemmaThinkToggle.active { color: #ffd27a; background: rgba(255,190,70,.14); }
+  #reasoningPicker .picker-trigger { min-width: 85px; }
   #mic.recording { color: #ff5268; opacity: 1; }
   #mic.recording svg { filter: drop-shadow(0 0 5px rgba(255,65,90,.45)); }
   #mic:disabled { opacity: .45; cursor: wait; }
   @media (max-width: 540px) {
-    #modelSelect { width: 116px; max-width: 116px; font-size: 10px; padding-left: 3px; }
-    .model-control { height: 38px; }
-    #thinkToggle { height: 38px; width: 32px; }
+    .model-control { height: 38px; gap: 1px; }
+    .picker-trigger { min-height: 36px; padding: 0 3px; font-size: 10px; gap: 3px; }
+    #modelLabel { max-width: 103px; overflow: hidden; text-overflow: ellipsis; }
+    #gemmaThinkToggle { width: 30px; height: 36px; }
+    #reasoningPicker .picker-trigger { min-width: 72px; }
+    .glass-dropdown-menu { min-width: 174px; }
     #composer { left: 8px; right: 8px; padding-left: 6px; padding-right: 6px; }
     .icon { width: 36px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dropdown-chevron, .glass-dropdown-menu, .picker-trigger, #gemmaThinkToggle { transition: none !important; }
   }
 
   .lg-host, .lg-host + .lg-cover {
@@ -186,15 +229,37 @@
       <svg viewBox="0 0 24 24"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.4-8.4"/></svg>
     </button>
     <textarea id="input" rows="1" placeholder="Message ABC123"></textarea>
-    <div class="model-control" title="Choose a chat model">
-      <select id="modelSelect" aria-label="Choose chat model">
-        <option value="granite" selected>Granite 4.0 H Micro</option>
-        <option value="gpt-oss-20b">GPT-OSS 20B</option>
-        <option value="gemma-4">Gemma 4 26B A4B</option>
-      </select>
-      <button id="thinkToggle" type="button" aria-label="Think mode" aria-pressed="false" title="Think mode is available with GPT-OSS 20B and Gemma 4">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18V5"/><path d="M15.5 13a4.17 4.17 0 0 1-3.5-6.5 4.17 4.17 0 0 1-3.5 6.5"/><path d="M8.5 13A4.17 4.17 0 0 0 12 6.5"/><path d="M5.5 14.5a3.5 3.5 0 0 0 1.9 3.1A3.8 3.8 0 0 0 12 21a3.8 3.8 0 0 0 4.6-3.4 3.5 3.5 0 0 0 1.9-3.1"/><path d="M5.7 9.2A3.7 3.7 0 0 1 8.5 3.5a4.2 4.2 0 0 1 7 0 3.7 3.7 0 0 1 2.8 5.7"/></svg>
+    <div class="model-control" aria-label="Chat model and reasoning controls">
+      <div class="picker-wrap" id="modelPicker">
+        <button class="picker-trigger" id="modelTrigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="modelMenu">
+          <span id="modelLabel">Granite 4.0 H Micro</span>
+          <svg class="dropdown-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="glass-dropdown-menu" id="modelMenu" role="menu" aria-label="Choose model" hidden>
+          <div class="menu-caption">Chat model</div>
+          <button class="glass-menu-item selected" type="button" role="menuitemradio" aria-checked="true" data-model="granite"><span>Granite 4.0 H Micro</span><span class="menu-check">✓</span></button>
+          <button class="glass-menu-item" type="button" role="menuitemradio" aria-checked="false" data-model="gpt-oss-20b"><span>GPT-OSS 20B</span><span class="menu-check">✓</span></button>
+          <button class="glass-menu-item" type="button" role="menuitemradio" aria-checked="false" data-model="gemma-4"><span>Gemma 4 26B A4B</span><span class="menu-check">✓</span></button>
+        </div>
+      </div>
+
+      <button id="gemmaThinkToggle" type="button" aria-label="Toggle Gemma thinking" aria-pressed="false" title="Toggle Gemma 4 thinking mode" hidden>
+        <!-- Same sparkle/star glyph used for the former FLUX.2 Klein generation control. -->
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"/></svg>
       </button>
+
+      <div class="picker-wrap" id="reasoningPicker" hidden>
+        <button class="picker-trigger" id="reasoningTrigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="reasoningMenu">
+          <span id="reasoningLabel">Medium</span>
+          <svg class="dropdown-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="glass-dropdown-menu" id="reasoningMenu" role="menu" aria-label="GPT-OSS reasoning effort" hidden>
+          <div class="menu-caption">Thinking level</div>
+          <button class="glass-menu-item" type="button" role="menuitemradio" aria-checked="false" data-effort="low"><span>Low</span><span class="menu-check">✓</span></button>
+          <button class="glass-menu-item selected" type="button" role="menuitemradio" aria-checked="true" data-effort="medium"><span>Medium</span><span class="menu-check">✓</span></button>
+          <button class="glass-menu-item" type="button" role="menuitemradio" aria-checked="false" data-effort="high"><span>High</span><span class="menu-check">✓</span></button>
+        </div>
+      </div>
     </div>
     <button class="icon" id="mic" type="button" title="Record speech with Whisper" aria-label="Record speech">
       <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
@@ -377,39 +442,119 @@ const MODEL_LABELS = {
   "gpt-oss-20b": "GPT-OSS 20B",
   "gemma-4": "Gemma 4 26B A4B"
 };
-const THINK_MODELS = new Set(["gpt-oss-20b", "gemma-4"]);
+let selectedModelKey = "granite";
+let gemmaThinkingEnabled = false;
+let gptReasoningEffort = "medium";
 let history = [];
 let pendingImage = null;
 let busy = false;
 let transcribing = false;
-let thinkEnabled = false;
 let recorder = null;
 let recorderStream = null;
 let recorderChunks = [];
 let recordingTimer = null;
 
-const modelSelect = $("modelSelect");
-const thinkToggle = $("thinkToggle");
+const modelPicker = $("modelPicker");
+const modelTrigger = $("modelTrigger");
+const modelMenu = $("modelMenu");
+const modelLabel = $("modelLabel");
+const gemmaThinkToggle = $("gemmaThinkToggle");
+const reasoningPicker = $("reasoningPicker");
+const reasoningTrigger = $("reasoningTrigger");
+const reasoningMenu = $("reasoningMenu");
+const reasoningLabel = $("reasoningLabel");
 const micButton = $("mic");
 
-function syncThinkControl() {
-  const canThink = THINK_MODELS.has(modelSelect.value);
-  if (!canThink) thinkEnabled = false;
-  thinkToggle.disabled = !canThink;
-  thinkToggle.classList.toggle("active", thinkEnabled && canThink);
-  thinkToggle.setAttribute("aria-pressed", String(thinkEnabled && canThink));
-  thinkToggle.title = canThink
-    ? (thinkEnabled ? "Think mode is on: high reasoning effort" : "Turn on high reasoning effort")
-    : "Thinking controls are available with GPT-OSS 20B and Gemma 4; Granite has no documented reasoning switch.";
+function setDropdownOpen(wrapper, trigger, menu, open) {
+  clearTimeout(menu._hideTimer);
+  if (open) {
+    menu.hidden = false;
+    requestAnimationFrame(() => menu.classList.add("open"));
+    wrapper.classList.add("menu-open");
+    trigger.setAttribute("aria-expanded", "true");
+  } else {
+    menu.classList.remove("open");
+    wrapper.classList.remove("menu-open");
+    trigger.setAttribute("aria-expanded", "false");
+    menu._hideTimer = setTimeout(() => { menu.hidden = true; }, 210);
+  }
 }
 
-modelSelect.addEventListener("change", syncThinkControl);
-thinkToggle.addEventListener("click", () => {
-  if (!THINK_MODELS.has(modelSelect.value)) return;
-  thinkEnabled = !thinkEnabled;
-  syncThinkControl();
+function closeDropdowns(except = null) {
+  if (except !== "model") setDropdownOpen(modelPicker, modelTrigger, modelMenu, false);
+  if (except !== "reasoning") setDropdownOpen(reasoningPicker, reasoningTrigger, reasoningMenu, false);
+}
+
+modelTrigger.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const shouldOpen = modelMenu.hidden;
+  closeDropdowns("model");
+  setDropdownOpen(modelPicker, modelTrigger, modelMenu, shouldOpen);
 });
-syncThinkControl();
+
+reasoningTrigger.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const shouldOpen = reasoningMenu.hidden;
+  closeDropdowns("reasoning");
+  setDropdownOpen(reasoningPicker, reasoningTrigger, reasoningMenu, shouldOpen);
+});
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".picker-wrap")) closeDropdowns();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeDropdowns();
+    modelTrigger.focus();
+  }
+});
+
+function syncModelControls() {
+  modelLabel.textContent = MODEL_LABELS[selectedModelKey];
+  gemmaThinkToggle.hidden = selectedModelKey !== "gemma-4";
+  reasoningPicker.hidden = selectedModelKey !== "gpt-oss-20b";
+  gemmaThinkToggle.classList.toggle("active", selectedModelKey === "gemma-4" && gemmaThinkingEnabled);
+  gemmaThinkToggle.setAttribute("aria-pressed", String(selectedModelKey === "gemma-4" && gemmaThinkingEnabled));
+  gemmaThinkToggle.title = gemmaThinkingEnabled
+    ? "Gemma 4 thinking is on"
+    : "Turn on Gemma 4 thinking";
+  reasoningLabel.textContent = gptReasoningEffort.charAt(0).toUpperCase() + gptReasoningEffort.slice(1);
+
+  modelMenu.querySelectorAll("[data-model]").forEach((item) => {
+    const selected = item.dataset.model === selectedModelKey;
+    item.classList.toggle("selected", selected);
+    item.setAttribute("aria-checked", String(selected));
+  });
+  reasoningMenu.querySelectorAll("[data-effort]").forEach((item) => {
+    const selected = item.dataset.effort === gptReasoningEffort;
+    item.classList.toggle("selected", selected);
+    item.setAttribute("aria-checked", String(selected));
+  });
+}
+
+modelMenu.querySelectorAll("[data-model]").forEach((item) => {
+  item.addEventListener("click", () => {
+    selectedModelKey = item.dataset.model;
+    syncModelControls();
+    closeDropdowns();
+  });
+});
+
+reasoningMenu.querySelectorAll("[data-effort]").forEach((item) => {
+  item.addEventListener("click", () => {
+    gptReasoningEffort = item.dataset.effort;
+    syncModelControls();
+    closeDropdowns();
+  });
+});
+
+gemmaThinkToggle.addEventListener("click", () => {
+  if (selectedModelKey !== "gemma-4") return;
+  gemmaThinkingEnabled = !gemmaThinkingEnabled;
+  syncModelControls();
+});
+
+syncModelControls();
 
 $("attach").onclick = () => $("file").click();
 $("file").onchange = async (event) => {
@@ -690,10 +835,8 @@ function addWebImages(element, images) {
   for (const item of images.slice(0, 6)) {
     if (!item || !item.image_url || !item.page_url) continue;
     let imageUrl, pageUrl;
-    try {
-      imageUrl = new URL(item.image_url);
-      pageUrl = new URL(item.page_url);
-    } catch { continue; }
+    try { imageUrl = new URL(item.image_url); pageUrl = new URL(item.page_url); }
+    catch { continue; }
     if (!["http:", "https:"].includes(imageUrl.protocol) || !["http:", "https:"].includes(pageUrl.protocol)) continue;
     const link = document.createElement("a");
     link.className = "web-image-card";
@@ -838,8 +981,9 @@ async function send() {
   }
 
   busy = true;
-  const selectedModel = modelSelect.value;
-  const useThinking = thinkEnabled && THINK_MODELS.has(selectedModel);
+  const selectedModel = selectedModelKey;
+  const useThinking = selectedModel === "gemma-4" && gemmaThinkingEnabled;
+  const reasoningEffort = selectedModel === "gpt-oss-20b" ? gptReasoningEffort : "medium";
   const message = {
     role: "user",
     content: text || "Describe this image."
@@ -862,7 +1006,8 @@ async function send() {
       action: "chat",
       messages: history,
       model: selectedModel,
-      think: useThinking
+      think: useThinking,
+      reasoning_effort: reasoningEffort
     });
     if (result.error) throw new Error(result.error);
     const answer = sanitizeAssistantText(result.text || "");
