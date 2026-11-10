@@ -97,9 +97,10 @@ MODEL_LABELS = {
     "gemma-4": "Gemma 4 26B A4B",
 }
 DEFAULT_MODEL_KEY = "granite"
-WHISPER_MODEL = "@cf/openai/whisper"  # Used only for microphone transcription; never shown in the model selector.
+WHISPER_MODEL = "@cf/openai/whisper"
 CLOUDFLARE_API = "https://api.cloudflare.com/client/v4"
 USER_AGENT = "AIv2/1.0 (web research assistant)"
+
 SYSTEM_PROMPT = """You are ABC123, a helpful, clear, and accurate AI assistant.
 
 You can use tools to search the public web, read web pages, and find images.
@@ -198,13 +199,11 @@ def _cloudflare_run(
     }
 
     if model_id == MODEL_IDS["gemma-4"]:
-        # Gemma 4 has a native thinking switch in its chat template.
         body["chat_template_kwargs"] = {
             "enable_thinking": bool(think_enabled),
             "clear_thinking": False,
         }
     elif model_id == MODEL_IDS["gpt-oss-20b"]:
-        # GPT-OSS exposes low/medium/high reasoning effort.
         body["reasoning_effort"] = "high" if think_enabled else "medium"
     elif model_id == MODEL_IDS["granite"] and think_enabled:
         raise ValueError(
@@ -259,7 +258,7 @@ def _extract_cloudflare_result(payload: Any) -> dict:
 
 
 def transcribe_with_whisper(audio_base64: str, audio_mime: str = "audio/webm") -> str:
-    """Transcribe a microphone recording with Cloudflare's hidden Whisper model."""
+    """Transcribe microphone audio with Cloudflare Whisper using a raw binary body."""
     import base64
     import binascii
 
@@ -277,17 +276,20 @@ def transcribe_with_whisper(audio_base64: str, audio_mime: str = "audio/webm") -
     if len(audio_bytes) < 256:
         raise ValueError("The recording was too short or empty.")
 
+    content_type = str(audio_mime or "").strip() or "application/octet-stream"
+    if not content_type.lower().startswith("audio/"):
+        content_type = "application/octet-stream"
+
     account_id, api_token = cloudflare_credentials()
     endpoint = f"{CLOUDFLARE_API}/accounts/{account_id}/ai/run/{WHISPER_MODEL}"
-    # Cloudflare's Whisper REST input accepts audio as a base64 string.
     try:
         response = requests.post(
             endpoint,
             headers={
                 "Authorization": f"Bearer {api_token}",
-                "Content-Type": "application/json",
+                "Content-Type": content_type,
             },
-            json={"audio": encoded, "task": "transcribe"},
+            data=audio_bytes,
             timeout=(15, 180),
         )
     except requests.Timeout as exc:
@@ -306,7 +308,10 @@ def transcribe_with_whisper(audio_base64: str, audio_mime: str = "audio/webm") -
         detail = _cloudflare_error_detail(payload, response.text[:800])
         raise RuntimeError(explain_cloudflare_error(response.status_code, detail))
     if isinstance(payload, dict) and payload.get("success") is False:
-        raise RuntimeError("Whisper model error: " + _cloudflare_error_detail(payload, "Transcription failed."))
+        raise RuntimeError(
+            "Whisper model error: "
+            + _cloudflare_error_detail(payload, "Transcription failed.")
+        )
 
     result = _extract_cloudflare_result(payload)
     transcript = str(result.get("text") or "").strip()
@@ -603,7 +608,6 @@ def image_search(query: str, max_results: int = 5) -> dict:
         ext = info.get("extmetadata") or {}
         license_name = (ext.get("LicenseShortName") or {}).get("value", "")
         artist = (ext.get("Artist") or {}).get("value", "")
-        # Strip tags from Wikimedia attribution metadata before sending it to the UI/model.
         artist = re.sub(r"<[^>]+>", " ", artist)
         artist = re.sub(r"\s+", " ", unescape(artist)).strip()
         images.append({
@@ -689,7 +693,6 @@ def _completion_message(result: dict) -> tuple[dict, dict]:
         choice = choices[0] if isinstance(choices[0], dict) else {}
         message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
         return message, choice
-    # Compatibility with Workers AI's native /ai/run response object.
     message = {
         "role": "assistant",
         "content": result.get("response") or result.get("text") or "",
@@ -724,8 +727,6 @@ def _remove_inline_image_payloads(text: str) -> str:
         "[image data omitted]",
         text,
     )
-    # Catch bare long base64 blobs accidentally emitted by a model. Restrict to
-    # strings of 512+ base64 characters so normal words and short identifiers survive.
     text = re.sub(
         r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{512,}={0,2}(?![A-Za-z0-9+/])",
         "[binary image data omitted]",
@@ -779,15 +780,23 @@ def _run_tool(name: str, arguments: dict) -> tuple[dict, list[dict], list[dict],
         result = image_search(arguments.get("query", ""), arguments.get("max_results", 5))
         images.extend(result.get("images", []))
         activity = f"Found {len(images)} image result(s) for: {result['query']}"
-        # Keep the tool response concise; the app separately displays the image URLs.
         model_result = {
             "query": result["query"],
             "images": [
-                {"title": img["title"], "page_url": img["page_url"], "license": img.get("license", ""), "artist": img.get("artist", "")}
+                {
+                    "title": img["title"],
+                    "page_url": img["page_url"],
+                    "license": img.get("license", ""),
+                    "artist": img.get("artist", ""),
+                }
                 for img in result.get("images", [])
             ],
         }
-        sources.extend({"title": img["title"], "url": img["page_url"], "snippet": f"Wikimedia Commons image. License: {img.get('license') or 'See source page'}."} for img in result.get("images", []))
+        sources.extend({
+            "title": img["title"],
+            "url": img["page_url"],
+            "snippet": f"Wikimedia Commons image. License: {img.get('license') or 'See source page'}.",
+        } for img in result.get("images", []))
         return model_result, sources, images, activity
 
     raise ValueError(f"Unknown tool: {name}")
@@ -858,8 +867,6 @@ def chat_with_model(
                     })
                 clean_messages.append({"role": role, "content": parts})
             else:
-                # Granite and GPT-OSS are text-only in this Workers AI catalog.
-                # Keep uploads working by describing them with Gemma 4 first.
                 descriptions = []
                 for image_number, image in enumerate(valid_images, start=1):
                     description = describe_image_with_gemma(
