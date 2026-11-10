@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -115,6 +116,41 @@
   #preview .icon { width: 28px; height: 28px; }
   #preview .icon svg { width: 16px; height: 16px; }
 
+  /* Model selector and Think toggle share one compact control group. */
+  .model-control {
+    display: flex; align-items: center; flex: none; height: 40px;
+    border: 1px solid rgba(255,255,255,.16); border-radius: 14px;
+    background: rgba(6,12,25,.28); overflow: hidden;
+  }
+  #modelSelect {
+    appearance: none; -webkit-appearance: none;
+    width: 146px; max-width: 146px; height: 40px; padding: 0 25px 0 10px;
+    border: 0; outline: 0; color: var(--text); background: transparent;
+    font-family: inherit; font-size: 11px; line-height: 1.2; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23f4f7ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+  }
+  #modelSelect option { color: #f4f7ff; background: #111827; }
+  #thinkToggle {
+    width: 38px; height: 40px; border: 0; border-left: 1px solid rgba(255,255,255,.14);
+    border-radius: 0; color: var(--text); background: transparent; cursor: pointer;
+    display: grid; place-items: center; flex: none; padding: 0;
+    transition: background .15s, color .15s, opacity .15s;
+  }
+  #thinkToggle svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  #thinkToggle.active { color: #ffd27a; background: rgba(255,190,70,.14); }
+  #thinkToggle:disabled { opacity: .34; cursor: not-allowed; }
+  #mic.recording { color: #ff5268; opacity: 1; }
+  #mic.recording svg { filter: drop-shadow(0 0 5px rgba(255,65,90,.45)); }
+  #mic:disabled { opacity: .45; cursor: wait; }
+  @media (max-width: 540px) {
+    #modelSelect { width: 116px; max-width: 116px; font-size: 10px; padding-left: 7px; }
+    .model-control { height: 38px; }
+    #thinkToggle { height: 38px; width: 34px; }
+    #composer { left: 8px; right: 8px; padding-left: 6px; padding-right: 6px; }
+    .icon { width: 36px; }
+  }
+
   .lg-host, .lg-host + .lg-cover {
     --lg-glint-exp: 1; --lg-glint-sat: 1;
     --lg-rim-exp: 1; --lg-rim-sat: 1;
@@ -147,6 +183,19 @@
       <svg viewBox="0 0 24 24"><path d="M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.4-8.4"/></svg>
     </button>
     <textarea id="input" rows="1" placeholder="Message ABC123"></textarea>
+    <div class="model-control" title="Choose a chat model; the rocket toggles its reasoning mode">
+      <select id="modelSelect" aria-label="Choose chat model">
+        <option value="granite" selected>Granite 4.0 H Micro</option>
+        <option value="gpt-oss-20b">GPT-OSS 20B</option>
+        <option value="gemma-4">Gemma 4 26B A4B</option>
+      </select>
+      <button id="thinkToggle" type="button" aria-label="Think mode" aria-pressed="false" title="Think mode is available with GPT-OSS 20B and Gemma 4">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19c4-1 7-4 9-8l2-5 3 3-5 2c-4 2-7 5-8 9z"/><path d="m14 10 3 3M4 5l1 2 2 1-2 1-1 2-1-2-2-1 2-1zM18 16l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/></svg>
+      </button>
+    </div>
+    <button class="icon" id="mic" type="button" title="Record speech with Whisper" aria-label="Record speech">
+      <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    </button>
     <button class="icon" id="send" title="Send" aria-label="Send">
       <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
     </button>
@@ -230,7 +279,7 @@ addEventListener("message", (event) => {
 stSend("componentReady", { apiVersion: 1 });
 stSend("setFrameHeight", { height: 600 });
 
-function askPython(messages) {
+function askPython(payload) {
   return new Promise((resolve, reject) => {
     const id = Date.now() + "-" + Math.random().toString(36).slice(2);
     const timer = setTimeout(() => {
@@ -245,7 +294,7 @@ function askPython(messages) {
       }
     };
     stSend("setComponentValue", {
-      value: { id, messages },
+      value: { id, ...payload },
       dataType: "json"
     });
   });
@@ -314,18 +363,52 @@ async function compressImage(file, maxSide = 1024, quality = 0.72) {
 
 const kb = (size) => (size / 1024).toFixed(0) + " KB";
 
-/* Chat. */
+/* Chat, model selection, Think mode, and Whisper dictation. */
 const toBottom = () => scroller.scrollTo(0, scroller.scrollHeight);
 const nearBottom = () => (
   scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 160
 );
 
+const MODEL_LABELS = {
+  granite: "Granite 4.0 H Micro",
+  "gpt-oss-20b": "GPT-OSS 20B",
+  "gemma-4": "Gemma 4 26B A4B"
+};
+const THINK_MODELS = new Set(["gpt-oss-20b", "gemma-4"]);
 let history = [];
 let pendingImage = null;
 let busy = false;
+let transcribing = false;
+let thinkEnabled = false;
+let recorder = null;
+let recorderStream = null;
+let recorderChunks = [];
+let recordingTimer = null;
+
+const modelSelect = $("modelSelect");
+const thinkToggle = $("thinkToggle");
+const micButton = $("mic");
+
+function syncThinkControl() {
+  const canThink = THINK_MODELS.has(modelSelect.value);
+  if (!canThink) thinkEnabled = false;
+  thinkToggle.disabled = !canThink;
+  thinkToggle.classList.toggle("active", thinkEnabled && canThink);
+  thinkToggle.setAttribute("aria-pressed", String(thinkEnabled && canThink));
+  thinkToggle.title = canThink
+    ? (thinkEnabled ? "Think mode is on: high reasoning effort" : "Turn on high reasoning effort")
+    : "Thinking controls are available with GPT-OSS 20B and Gemma 4; Granite has no documented reasoning switch.";
+}
+
+modelSelect.addEventListener("change", syncThinkControl);
+thinkToggle.addEventListener("click", () => {
+  if (!THINK_MODELS.has(modelSelect.value)) return;
+  thinkEnabled = !thinkEnabled;
+  syncThinkControl();
+});
+syncThinkControl();
 
 $("attach").onclick = () => $("file").click();
-
 $("file").onchange = async (event) => {
   const file = event.target.files[0];
   event.target.value = "";
@@ -380,8 +463,7 @@ function addMsg(role, text, imageDataUrl) {
   return body;
 }
 
-/* Clean accidental raw image payloads and Markdown image embeds.
-   Search images are displayed from the structured result.images array below. */
+/* Clean accidental raw image payloads and Markdown image embeds. */
 function sanitizeAssistantText(value) {
   let text = String(value || "");
   text = text.replace(/!\[[^\]]*\]\(\s*https?:\/\/[^)\s]+(?:\s+"[^"]*")?\s*\)\s*(?:\[\d+\])?/gi, "");
@@ -400,16 +482,11 @@ function appendInlineMarkdown(parent, source) {
   let match;
 
   while ((match = token.exec(source)) !== null) {
-    if (match.index > last) {
-      parent.appendChild(document.createTextNode(source.slice(last, match.index)));
-    }
-
+    if (match.index > last) parent.appendChild(document.createTextNode(source.slice(last, match.index)));
     if (match[1] !== undefined) {
-      // Markdown image fallback. The backend normally moves search images
-      // into structured image cards, but this safely handles an inline image.
       try {
         const url = new URL(match[2]);
-        if (url.protocol === "http:" || url.protocol === "https:") {
+        if (["http:", "https:"].includes(url.protocol)) {
           const image = document.createElement("img");
           image.className = "inline-markdown-image";
           image.src = url.href;
@@ -417,28 +494,20 @@ function appendInlineMarkdown(parent, source) {
           image.loading = "lazy";
           image.referrerPolicy = "no-referrer";
           parent.appendChild(image);
-        } else {
-          parent.appendChild(document.createTextNode(match[0]));
-        }
-      } catch {
-        parent.appendChild(document.createTextNode(match[0]));
-      }
+        } else parent.appendChild(document.createTextNode(match[0]));
+      } catch { parent.appendChild(document.createTextNode(match[0])); }
     } else if (match[4] !== undefined) {
       try {
         const url = new URL(match[5]);
-        if (url.protocol === "http:" || url.protocol === "https:") {
+        if (["http:", "https:"].includes(url.protocol)) {
           const link = document.createElement("a");
           link.href = url.href;
           link.target = "_blank";
           link.rel = "noopener noreferrer";
           appendInlineMarkdown(link, match[4]);
           parent.appendChild(link);
-        } else {
-          parent.appendChild(document.createTextNode(match[0]));
-        }
-      } catch {
-        parent.appendChild(document.createTextNode(match[0]));
-      }
+        } else parent.appendChild(document.createTextNode(match[0]));
+      } catch { parent.appendChild(document.createTextNode(match[0])); }
     } else if (match[6] !== undefined || match[7] !== undefined) {
       const strong = document.createElement("strong");
       appendInlineMarkdown(strong, match[6] ?? match[7]);
@@ -468,46 +537,30 @@ function appendInlineMarkdown(parent, source) {
           link.textContent = url;
           parent.appendChild(link);
           if (trailing) parent.appendChild(document.createTextNode(trailing));
-        } else {
-          parent.appendChild(document.createTextNode(match[0]));
-        }
-      } catch {
-        parent.appendChild(document.createTextNode(match[0]));
-      }
+        } else parent.appendChild(document.createTextNode(match[0]));
+      } catch { parent.appendChild(document.createTextNode(match[0])); }
     }
-
     last = token.lastIndex;
   }
-
-  if (last < source.length) {
-    parent.appendChild(document.createTextNode(source.slice(last)));
-  }
+  if (last < source.length) parent.appendChild(document.createTextNode(source.slice(last)));
 }
 
 function renderAssistantMarkdown(element, markdown) {
   element.replaceChildren();
   const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
   let index = 0;
-
   const isBlockStart = (line) =>
-    /^\s*```/.test(line) ||
-    /^\s{0,3}#{1,6}\s+/.test(line) ||
-    /^\s{0,3}>/.test(line) ||
-    /^\s*([-*+]\s+|\d+[.)]\s+)/.test(line) ||
-    /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line);
+    /^\s*```/.test(line) || /^\s{0,3}#{1,6}\s+/.test(line) || /^\s{0,3}>/.test(line) ||
+    /^\s*([-*+]\s+|\d+[.)]\s+)/.test(line) || /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line);
 
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim()) { index++; continue; }
-
-    // Fenced code block.
     if (/^\s*```/.test(line)) {
       const language = line.replace(/^\s*```/, "").trim();
       index++;
       const codeLines = [];
-      while (index < lines.length && !/^\s*```/.test(lines[index])) {
-        codeLines.push(lines[index++]);
-      }
+      while (index < lines.length && !/^\s*```/.test(lines[index])) codeLines.push(lines[index++]);
       if (index < lines.length) index++;
       const pre = document.createElement("pre");
       const code = document.createElement("code");
@@ -517,8 +570,6 @@ function renderAssistantMarkdown(element, markdown) {
       element.appendChild(pre);
       continue;
     }
-
-    // Headings.
     const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (heading) {
       const node = document.createElement(`h${heading[1].length}`);
@@ -527,27 +578,19 @@ function renderAssistantMarkdown(element, markdown) {
       index++;
       continue;
     }
-
-    // Horizontal rule.
     if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
       element.appendChild(document.createElement("hr"));
       index++;
       continue;
     }
-
-    // Blockquote.
     if (/^\s{0,3}>/.test(line)) {
       const quoteLines = [];
-      while (index < lines.length && /^\s{0,3}>/.test(lines[index])) {
-        quoteLines.push(lines[index++].replace(/^\s{0,3}>\s?/, ""));
-      }
+      while (index < lines.length && /^\s{0,3}>/.test(lines[index])) quoteLines.push(lines[index++].replace(/^\s{0,3}>\s?/, ""));
       const quote = document.createElement("blockquote");
       appendInlineMarkdown(quote, quoteLines.join(" "));
       element.appendChild(quote);
       continue;
     }
-
-    // Ordered and unordered lists.
     const listMatch = line.match(/^\s*(?:([-*+])\s+|(\d+)[.)]\s+)(.*)$/);
     if (listMatch) {
       const ordered = Boolean(listMatch[2]);
@@ -563,15 +606,9 @@ function renderAssistantMarkdown(element, markdown) {
       element.appendChild(list);
       continue;
     }
-
-    // Ordinary paragraph. Preserve deliberate single line breaks.
     const paragraphLines = [];
-    while (index < lines.length && lines[index].trim() && !isBlockStart(lines[index])) {
-      paragraphLines.push(lines[index++]);
-    }
-    if (!paragraphLines.length) {
-      paragraphLines.push(lines[index++]);
-    }
+    while (index < lines.length && lines[index].trim() && !isBlockStart(lines[index])) paragraphLines.push(lines[index++]);
+    if (!paragraphLines.length) paragraphLines.push(lines[index++]);
     const paragraph = document.createElement("p");
     paragraphLines.forEach((part, partIndex) => {
       if (partIndex) paragraph.appendChild(document.createElement("br"));
@@ -587,13 +624,14 @@ function reveal(element, text) {
 }
 
 function addThinking(element, thinking, activity = []) {
+  if (!thinking && (!Array.isArray(activity) || !activity.length)) return;
   const details = document.createElement("details");
   details.className = "thinking-details";
   const summary = document.createElement("summary");
   summary.textContent = "Thinking & research activity";
   const body = document.createElement("div");
   body.className = "thinking-body";
-  body.textContent = thinking || "Gemma 4 reasoning mode was enabled. The service does not return a separate step-by-step reasoning transcript.";
+  body.textContent = thinking || "Reasoning mode was not enabled for this response.";
   details.appendChild(summary);
   details.appendChild(body);
   if (Array.isArray(activity) && activity.length) {
@@ -649,10 +687,8 @@ function addWebImages(element, images) {
   for (const item of images.slice(0, 6)) {
     if (!item || !item.image_url || !item.page_url) continue;
     let imageUrl, pageUrl;
-    try {
-      imageUrl = new URL(item.image_url);
-      pageUrl = new URL(item.page_url);
-    } catch { continue; }
+    try { imageUrl = new URL(item.image_url); pageUrl = new URL(item.page_url); }
+    catch { continue; }
     if (!["http:", "https:"].includes(imageUrl.protocol) || !["http:", "https:"].includes(pageUrl.protocol)) continue;
     const link = document.createElement("a");
     link.className = "web-image-card";
@@ -679,11 +715,126 @@ function addWebImages(element, images) {
   if (grid.children.length) element.parentElement.appendChild(grid);
 }
 
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      const comma = value.indexOf(",");
+      resolve(comma >= 0 ? value.slice(comma + 1) : value);
+    };
+    reader.onerror = () => reject(new Error("Could not read microphone audio."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function stopMicrophoneTracks() {
+  if (recordingTimer) clearTimeout(recordingTimer);
+  recordingTimer = null;
+  if (recorderStream) {
+    recorderStream.getTracks().forEach((track) => track.stop());
+    recorderStream = null;
+  }
+  micButton.classList.remove("recording");
+  micButton.title = "Record speech with Whisper";
+  micButton.setAttribute("aria-label", "Record speech");
+}
+
+async function transcribeRecording(blob, mimeType) {
+  if (!blob || blob.size < 256) {
+    alert("The recording was empty. Please try again.");
+    return;
+  }
+  if (blob.size > 12 * 1024 * 1024) {
+    alert("That recording is too large. Please record a shorter clip.");
+    return;
+  }
+  transcribing = true;
+  micButton.disabled = true;
+  micButton.title = "Transcribing with Whisper…";
+  input.placeholder = "Transcribing speech…";
+  try {
+    const audioBase64 = await blobToBase64(blob);
+    const result = await askPython({
+      action: "transcribe",
+      audio_base64: audioBase64,
+      audio_mime: mimeType || "audio/webm"
+    });
+    if (result.error) throw new Error(result.error);
+    const transcript = String(result.transcript || "").trim();
+    if (!transcript) throw new Error("Whisper did not return any words.");
+    const current = input.value.trim();
+    input.value = current ? `${current} ${transcript}` : transcript;
+    autosize();
+    input.focus();
+  } catch (error) {
+    alert("Whisper transcription failed: " + error.message);
+  } finally {
+    transcribing = false;
+    micButton.disabled = false;
+    input.placeholder = "Message ABC123";
+    micButton.title = "Record speech with Whisper";
+  }
+}
+
+async function toggleMicrophone() {
+  if (busy || transcribing) return;
+  if (recorder && recorder.state === "recording") {
+    recorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    alert("Microphone recording is not supported by this browser. Use a secure HTTPS page in a Chromium-based browser.");
+    return;
+  }
+  try {
+    recorderStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+    const mimeType = mimeCandidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || "";
+    recorder = mimeType ? new MediaRecorder(recorderStream, { mimeType }) : new MediaRecorder(recorderStream);
+    recorderChunks = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size) recorderChunks.push(event.data);
+    };
+    recorder.onerror = (event) => {
+      stopMicrophoneTracks();
+      alert("Microphone recording failed: " + (event.error?.message || "unknown error"));
+    };
+    recorder.onstop = async () => {
+      const finalType = recorder.mimeType || mimeType || "audio/webm";
+      const blob = new Blob(recorderChunks, { type: finalType });
+      recorderChunks = [];
+      stopMicrophoneTracks();
+      await transcribeRecording(blob, finalType);
+    };
+    recorder.start(250);
+    micButton.classList.add("recording");
+    micButton.title = "Recording… click to stop";
+    micButton.setAttribute("aria-label", "Stop recording");
+    recordingTimer = setTimeout(() => {
+      if (recorder && recorder.state === "recording") recorder.stop();
+    }, 60000);
+  } catch (error) {
+    stopMicrophoneTracks();
+    alert("Could not access the microphone: " + error.message);
+  }
+}
+
+micButton.addEventListener("click", toggleMicrophone);
+
 async function send() {
   const text = input.value.trim();
-  if ((!text && !pendingImage) || busy) return;
+  if ((!text && !pendingImage) || busy || transcribing) return;
+  if (recorder && recorder.state === "recording") {
+    recorder.stop();
+    return;
+  }
 
   busy = true;
+  const selectedModel = modelSelect.value;
+  const useThinking = thinkEnabled && THINK_MODELS.has(selectedModel);
   const message = {
     role: "user",
     content: text || "Describe this image."
@@ -692,7 +843,6 @@ async function send() {
 
   addMsg("user", message.content, pendingImage?.dataUrl);
   history.push(message);
-
   input.value = "";
   autosize();
   pendingImage = null;
@@ -703,7 +853,12 @@ async function send() {
   toBottom();
 
   try {
-    const result = await askPython(history);
+    const result = await askPython({
+      action: "chat",
+      messages: history,
+      model: selectedModel,
+      think: useThinking
+    });
     if (result.error) throw new Error(result.error);
     const answer = sanitizeAssistantText(result.text || "");
     output.classList.remove("thinking-status");
