@@ -142,16 +142,16 @@
   .glass-dropdown-menu {
     position: absolute; right: 0; bottom: calc(100% + 9px); z-index: 100;
     min-width: 190px; padding: 6px; display: grid; gap: 3px;
-    border: 1px solid rgba(255,255,255,.22); border-radius: 17px;
-    background: linear-gradient(145deg, rgba(35,49,73,.84), rgba(8,15,30,.82));
-    -webkit-backdrop-filter: blur(24px) saturate(165%);
-    backdrop-filter: blur(24px) saturate(165%);
-    box-shadow: 0 18px 48px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.18);
+    border: 0; border-radius: 24px;
+    background: transparent;
+    box-shadow: none;
+    /* The shared Nordify liquid-glass renderer supplies the refraction,
+       blur, rim, reflection, and highlight used by the main composer. */
     transform: translateY(7px) scale(.975); transform-origin: bottom right;
-    opacity: 0; pointer-events: none;
-    transition: opacity .17s ease, transform .2s cubic-bezier(.2,.8,.2,1);
+    pointer-events: none;
+    transition: transform .2s cubic-bezier(.2,.8,.2,1);
   }
-  .glass-dropdown-menu.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  .glass-dropdown-menu.open { transform: translateY(0) scale(1); pointer-events: auto; }
   .glass-dropdown-menu[hidden] { display: none !important; }
   .glass-menu-item {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -469,20 +469,37 @@ function setDropdownOpen(wrapper, trigger, menu, open) {
   clearTimeout(menu._hideTimer);
   if (open) {
     menu.hidden = false;
-    requestAnimationFrame(() => menu.classList.add("open"));
+    /* Use the exact same Nordify liquid-glass settings as the composer. */
+    if (!menu._g) makeGlass(menu);
+    requestAnimationFrame(() => {
+      menu._g?.update();
+      menu.classList.add("open");
+    });
     wrapper.classList.add("menu-open");
     trigger.setAttribute("aria-expanded", "true");
   } else {
     menu.classList.remove("open");
     wrapper.classList.remove("menu-open");
     trigger.setAttribute("aria-expanded", "false");
-    menu._hideTimer = setTimeout(() => { menu.hidden = true; }, 210);
+    menu._hideTimer = setTimeout(() => {
+      menu.hidden = true;
+      if (menu._g) {
+        menu._g.destroy();
+        menu._g = null;
+      }
+    }, 210);
   }
 }
 
 function closeDropdowns(except = null) {
   if (except !== "model") setDropdownOpen(modelPicker, modelTrigger, modelMenu, false);
   if (except !== "reasoning") setDropdownOpen(reasoningPicker, reasoningTrigger, reasoningMenu, false);
+}
+
+for (const menu of [modelMenu, reasoningMenu]) {
+  menu.addEventListener("transitionend", (event) => {
+    if (event.propertyName === "transform") menu._g?.update();
+  });
 }
 
 modelTrigger.addEventListener("click", (event) => {
