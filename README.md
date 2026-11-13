@@ -1,5 +1,5 @@
 # AIv2
-LINK: https://aiv2gl.streamlit.app/
+LINK: https://abc123ai.streamlit.app/
 
 Uses Streamlit Community Cloud
 
